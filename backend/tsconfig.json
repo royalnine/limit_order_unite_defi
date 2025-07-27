@@ -1,8 +1,8 @@
 {
 	"compilerOptions": {
 		"target": "ES2020",
-		"module": "NodeNext",
-		"moduleResolution": "NodeNext",
+		"module": "commonjs",
+		"moduleResolution": "node",
 		"strict": true,
 		"esModuleInterop": true,
 		"resolveJsonModule": true,
@@ -15,10 +15,11 @@
 		"declaration": true,
 		"declarationMap": true,
 		"allowJs": true,
-		"checkJs": false
+		"checkJs": false,
+		"allowSyntheticDefaultImports": true
 	},
 	"ts-node": {
-		"esm": true,
+		"transpileOnly": true,
 		"experimentalSpecifierResolution": "node"
 	},
 	"include": ["src"],
