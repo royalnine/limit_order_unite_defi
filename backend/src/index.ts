@@ -20,6 +20,7 @@ const WETH_ADDRESS = '0x82aF49447D8a07e3bd95BD0d56f35241523fBab1';
 const USDT_ADDRESS = '0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9';
 const WETH_DECIMALS = 18;
 const USDT_DECIMALS = 6;
+const SPENDER_ADDRESS = '0x7F069df72b7A39bCE9806e3AfaF579E54D8CF2b9';
 
 async function main() {
     
@@ -27,13 +28,15 @@ async function main() {
         throw new Error('Environment variables PRIVATE_KEY or ONEINCH_API_KEY are missing');
     }
 
-    const maker = new ethers.Wallet(privKey);
+    const provider = new ethers.JsonRpcProvider(process.env.ARB_RPC_URL || 'https://arb1.arbitrum.io/rpc');
+    const maker = new ethers.Wallet(privKey, provider);
+
     const makerAddress = new Address(maker.address)
     const expiresIn = 120n // 2m
     const expiration = BigInt(Math.floor(Date.now() / 1000)) + expiresIn
 
     // see MakerTraits.ts
-    const makerTraits = MakerTraits.default().withExpiration(expiration).allowMultipleFills().allowPartialFills()
+    const makerTraits = MakerTraits.default().withExpiration(expiration).allowMultipleFills().allowPartialFills().enablePermit2()
 
     const sdk = new Sdk({ authKey: ONEINCH_API_KEY!, networkId: chainId, httpConnector: new FetchProviderConnector() })
 
