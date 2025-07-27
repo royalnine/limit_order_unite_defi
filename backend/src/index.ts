@@ -52,7 +52,7 @@ async function main() {
     const builtOrder = order.build()
     const extension = order.extension
 
-    const reconstructedOrder = LimitOrderWithFee.fromDataAndExtension(builtOrder, extension)
+    const reconstructedOrder = LimitOrder.fromDataAndExtension(builtOrder, extension)
 
     const typedData = reconstructedOrder.getTypedData(chainId)
     const signature = await maker.signTypedData(
