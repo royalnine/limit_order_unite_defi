@@ -1,5 +1,6 @@
 import { ethers, Interface } from 'ethers';
 import dotenv from 'dotenv';
+import fetch from 'node-fetch';
 
 import {
   LimitOrder,
@@ -18,6 +19,7 @@ dotenv.config();
 const chainId = 42161;
 const privKey = process.env.PRIVATE_KEY;
 const ONEINCH_API_KEY = process.env.ONEINCH_API_KEY;
+const RESOLVER_URL = process.env.RESOLVER_URL || 'http://localhost:3001';
 const WETH_ADDRESS = '0x82aF49447D8a07e3bd95BD0d56f35241523fBab1';
 const USDT_ADDRESS = '0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9';
 const WETH_DECIMALS = 18;
@@ -91,6 +93,33 @@ function buildMulticallInteraction(aaveAmount: bigint, onBehalfOf: Address): Int
     return new Interaction(new Address(MULTICALL3_ADDRESS), multicallData);
 }
 
+async function submitOrderToResolver(order: LimitOrder, signature: string): Promise<void> {
+    try {
+        const orderStruct = order.build();
+        
+        const response = await fetch(`${RESOLVER_URL}/submit-order`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                order: orderStruct,
+                signature
+            })
+        });
+
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+
+        const result = await response.json();
+        console.log('Order submitted to resolver:', result);
+    } catch (error) {
+        console.error('Failed to submit order to resolver:', error);
+        throw error;
+    }
+}
+
 
 async function main() {
     const makingAmount = BigInt(0.5 * 10 ** USDT_DECIMALS)
@@ -162,9 +191,12 @@ async function main() {
 
     
 
-    await api.submitOrder(orderWithExtension, signature)
-    const orders = await api.getOrdersByMaker(makerAddress)
-        console.log(orders)
+    // Submit to custom resolver instead of 1inch API
+    await submitOrderToResolver(orderWithExtension, signature)
+    
+    // Still get orders from 1inch API for comparison
+    // const orders = await api.getOrdersByMaker(makerAddress)
+    // console.log(orders)
     }
 
 main()
