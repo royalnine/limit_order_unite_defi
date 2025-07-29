@@ -1,0 +1,23 @@
+services:
+
+  arbitrum-fork:
+    image: ghcr.io/foundry-rs/foundry:stable
+    container_name: arbitrum-fork
+    platform: linux/amd64
+    entrypoint: ["anvil"]
+    command:
+      - "--block-time"
+      - "2"
+      - "--hardfork"
+      - "prague"
+      - "--host"
+      - "0.0.0.0"
+      - "--fork-url"
+      - "${ARBITRUM_RPC_URL}"
+      - "--port"
+      - "8547"
+      - "--chain-id"
+      - "42161"
+      - "--no-rate-limit"
+    ports:
+      - "8547:8547"

@@ -9,6 +9,9 @@ import {
   ExtensionBuilder,
   Interaction
 } from '@1inch/limit-order-sdk';
+import { trim0x } from '@1inch/byte-utils'
+import { TakerTraits } from '@1inch/limit-order-sdk'
+
 
 dotenv.config();
 
@@ -42,12 +45,24 @@ const USDT_ADDRESS = '0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9';
 const AAVE_POOL_ADDRESS = '0x794a61358D6845594F94dc1DB02A252b5b4814aD';
 const MULTICALL3_ADDRESS = '0xca11bde05977b3631167028862be2a173976ca11';
 const LIMIT_ORDER_PROTOCOL_ADDRESS = '0x111111125421cA6dc452d289314280a0f8842A65';
+const POST_INTERACTION_ADDRESS = '0xB5A296FAc05Fa8B5e8707E5E525b8C51aa6137F1';
+const MAKER_PRIVATE_KEY = process.env.MAKER_PRIVATE_KEY;
+const TAKER_PRIVATE_KEY = process.env.TAKER_PRIVATE_KEY;
+
+const ERC20_ABI = [
+  'function allowance(address owner, address spender) view returns (uint256)',
+  'function approve(address spender, uint256 amount) returns (bool)',
+  'function balanceOf(address account) view returns (uint256)',
+  'function decimals() view returns (uint8)',
+  'function symbol() view returns (string)'
+];
 
 const orderStorage = new Map<string, StoredOrder>();
 
 // Setup RPC provider
 const provider = new ethers.JsonRpcProvider(process.env.ARB_RPC_URL || 'https://arb1.arbitrum.io/rpc');
-const fillerWallet = new ethers.Wallet(process.env.PRIVATE_KEY || '', provider);
+const makerWallet = new ethers.Wallet(MAKER_PRIVATE_KEY!, provider);
+const takerWallet = new ethers.Wallet(TAKER_PRIVATE_KEY!, provider);
 
 function encodeAaveSupply(amount: bigint, trader: Address): string {
     const aavePoolAbi = [
@@ -65,6 +80,10 @@ function encodeAaveSupply(amount: bigint, trader: Address): string {
     return supplyCalldata;
 }
 
+function encodeCompleteMulticall(multicallData: string): string {
+    return MULTICALL3_ADDRESS + trim0x(multicallData)
+}
+
 function buildMulticallInteraction(aaveAmount: bigint, onBehalfOf: Address): Interaction {
     const multicallAbi = [
         'function aggregate3Value(tuple(address target,bool allowFailure,uint256 value,bytes callData)[] calls) returns (tuple(bool success, bytes returnData)[] returnData)'
@@ -78,7 +97,9 @@ function buildMulticallInteraction(aaveAmount: bigint, onBehalfOf: Address): Int
         [[AAVE_POOL_ADDRESS, false, 0, supplyCalldata]]
     ]);
 
-    return new Interaction(new Address(MULTICALL3_ADDRESS), multicallData);
+    const completeMulticallData = encodeCompleteMulticall(multicallData)
+
+    return new Interaction(new Address(POST_INTERACTION_ADDRESS), completeMulticallData);
 }
 
 function reconstructOrderWithExtension(orderStruct: LimitOrderV4Struct): LimitOrder {
@@ -176,7 +197,7 @@ async function fillOrderOnProtocol(storedOrder: StoredOrder): Promise<any> {
     const contract = new ethers.Contract(
       LIMIT_ORDER_PROTOCOL_ADDRESS,
       limitOrderProtocolAbi,
-      fillerWallet
+      takerWallet
     );
 
     const orderStruct = storedOrder.reconstructedOrder.build();
@@ -200,8 +221,12 @@ async function fillOrderOnProtocol(storedOrder: StoredOrder): Promise<any> {
     const recoveryId = parseInt(v, 16) - 27; // 0 or 1
     const modifiedFirstByte = recoveryId === 1 ? firstByteOfS | 0x80 : firstByteOfS;
     const vs = '0x' + modifiedFirstByte.toString(16).padStart(2, '0') + s.slice(2);
-
-    console.log('vs:', vs, 'length:', vs.length);
+    const takerTraits = new TakerTraits(0n, {
+        receiver: new Address(takerWallet.address),
+        extension: storedOrder.reconstructedOrder.extension
+      })
+    const {trait, args} = takerTraits.encode()
+    // console.log('vs:', vs, 'length:', vs.length);
 
     // Add comprehensive logging for cast call construction
     console.log('\n=== CAST CALL CONSTRUCTION ===');
@@ -232,18 +257,24 @@ async function fillOrderOnProtocol(storedOrder: StoredOrder): Promise<any> {
     console.log(`  ${r} \\`);
     console.log(`  ${vs} \\`);
     console.log(`  ${takingAmount.toString()} \\`);
-    console.log(`  0 \\`);
-    console.log(`  0x`);
+    console.log(`  ${trait} \\`);
+    console.log(`  ${args} \\`);
+    console.log(`  --trace`)
     console.log('================================\n');
 
+    // Check and approve limit order protocol contract for the taker asset
+    console.log('Checking limit order protocol approval for taker asset...');
+    await checkAndApproveLimitOrderProtocol(orderStruct.makerAsset, BigInt(orderStruct.makingAmount), makerWallet);
+    await checkAndApproveLimitOrderProtocol(orderStruct.takerAsset, takingAmount, takerWallet);
     // Fill the entire order
+    console.log('Filling order on protocol...');
     const tx = await contract.fillOrderArgs(
       orderStruct,
       r,
       vs,
-      takingAmount, // amount - how much we want to take
-      0, // takerTraits - no special traits
-      '0x' // args - empty args
+      takingAmount,
+      trait,
+      args
     );
 
     const receipt = await tx.wait();
@@ -256,6 +287,33 @@ async function fillOrderOnProtocol(storedOrder: StoredOrder): Promise<any> {
   } catch (error) {
     console.error('Error filling order:', error);
     throw error;
+  }
+}
+
+async function checkAndApproveLimitOrderProtocol(
+  tokenAddress: string, 
+  amount: bigint, 
+  wallet: ethers.Wallet
+): Promise<void> {
+  const tokenContract = new ethers.Contract(tokenAddress, ERC20_ABI, wallet);
+  
+  // Check current allowance for the limit order protocol contract
+  const currentAllowance = await tokenContract.allowance(wallet.address, LIMIT_ORDER_PROTOCOL_ADDRESS);
+  console.log(`Current limit order protocol allowance for ${tokenAddress}: ${currentAllowance.toString()}`);
+  
+  if (BigInt(currentAllowance.toString()) < amount) {
+    console.log(`Insufficient allowance, approving limit order protocol for ${tokenAddress}...`);
+    
+    // Approve max amount to avoid future approvals
+    const maxApproval = ethers.MaxUint256;
+    const approveTx = await tokenContract.approve(LIMIT_ORDER_PROTOCOL_ADDRESS, maxApproval);
+    console.log(`Approval transaction hash: ${approveTx.hash}`);
+    
+    // Wait for approval to be confirmed
+    await approveTx.wait();
+    console.log(`Limit order protocol approval confirmed for ${tokenAddress}`);
+  } else {
+    console.log(`Sufficient limit order protocol allowance already exists for ${tokenAddress}`);
   }
 }
 

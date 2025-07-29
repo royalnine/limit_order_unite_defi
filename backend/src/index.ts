@@ -1,6 +1,7 @@
 import { ethers, Interface } from 'ethers';
 import dotenv from 'dotenv';
 import fetch from 'node-fetch';
+import { trim0x } from '@1inch/byte-utils'
 
 import {
   LimitOrder,
@@ -17,7 +18,8 @@ import {
 dotenv.config();
 
 const chainId = 42161;
-const privKey = process.env.PRIVATE_KEY;
+const MAKER_PRIVATE_KEY = process.env.MAKER_PRIVATE_KEY;
+const TAKER_PRIVATE_KEY = process.env.TAKER_PRIVATE_KEY;
 const ONEINCH_API_KEY = process.env.ONEINCH_API_KEY;
 const RESOLVER_URL = process.env.RESOLVER_URL || 'http://localhost:3001';
 const WETH_ADDRESS = '0x82aF49447D8a07e3bd95BD0d56f35241523fBab1';
@@ -31,6 +33,8 @@ const USDT_DECIMALS = 6;
 const AAVE_POOL_ADDRESS = '0x794a61358D6845594F94dc1DB02A252b5b4814aD';
 // Multicall3 canonical deployment on Arbitrum One
 const MULTICALL3_ADDRESS = '0xca11bde05977b3631167028862be2a173976ca11';
+
+const POST_INTERACTION_ADDRESS = '0xB5A296FAc05Fa8B5e8707E5E525b8C51aa6137F1';
 
 
 function encodeAaveSupply(amount: bigint, trader: Address): string {
@@ -76,6 +80,9 @@ function encodeAaveSupply(amount: bigint, trader: Address): string {
 //     return collateralCalldata;
 // }
 
+function encodeCompleteMulticall(multicallData: string): string {
+    return MULTICALL3_ADDRESS + trim0x(multicallData)
+}
 
 function buildMulticallInteraction(aaveAmount: bigint, onBehalfOf: Address): Interaction {
     const multicallAbi = [
@@ -90,10 +97,33 @@ function buildMulticallInteraction(aaveAmount: bigint, onBehalfOf: Address): Int
         [[AAVE_POOL_ADDRESS, false, 0, supplyCalldata]]
     ]);
 
-    return new Interaction(new Address(MULTICALL3_ADDRESS), multicallData);
+    const completeMulticallData = encodeCompleteMulticall(multicallData)
+
+    return new Interaction(new Address(POST_INTERACTION_ADDRESS), completeMulticallData);
 }
 
-async function submitOrderToResolver(order: LimitOrder, signature: string): Promise<void> {
+async function fillOrderFromResolver(orderId: string): Promise<void> {
+    try {
+        const response = await fetch(`${RESOLVER_URL}/fill-order/${orderId}`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            }
+        });
+
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+
+        const result = await response.json();
+        console.log('Order filled successfully:', result);
+    } catch (error) {
+        console.error('Failed to fill order:', error);
+        throw error;
+    }
+}
+
+async function submitOrderToResolver(order: LimitOrder, signature: string): Promise<string> {
     try {
         const orderStruct = order.build();
         
@@ -112,8 +142,10 @@ async function submitOrderToResolver(order: LimitOrder, signature: string): Prom
             throw new Error(`HTTP error! status: ${response.status}`);
         }
 
-        const result = await response.json();
+        const result = await response.json() as { orderId: string };
         console.log('Order submitted to resolver:', result);
+        
+        return result.orderId;
     } catch (error) {
         console.error('Failed to submit order to resolver:', error);
         throw error;
@@ -125,59 +157,35 @@ async function main() {
     const makingAmount = BigInt(0.5 * 10 ** USDT_DECIMALS)
     const takingAmount = BigInt(0.0001 * 10 ** WETH_DECIMALS)
     
-    if (!privKey || !ONEINCH_API_KEY) {
-        throw new Error('Environment variables PRIVATE_KEY or ONEINCH_API_KEY are missing');
+    if (!MAKER_PRIVATE_KEY || !ONEINCH_API_KEY || !TAKER_PRIVATE_KEY) {
+        throw new Error('Environment variables MAKER_PRIVATE_KEY or ONEINCH_API_KEY or TAKER_PRIVATE_KEY are missing');
     }
 
     const provider = new ethers.JsonRpcProvider(process.env.ARB_RPC_URL || 'https://arb1.arbitrum.io/rpc');
-    const maker = new ethers.Wallet(privKey, provider);
-
+    const maker = new ethers.Wallet(MAKER_PRIVATE_KEY, provider);
+    const taker = new ethers.Wallet(TAKER_PRIVATE_KEY, provider);
     const makerAddress = new Address(maker.address)
+    const takerAddress = new Address(taker.address)
     const expiresIn = 120n // 2m
     const expiration = BigInt(Math.floor(Date.now() / 1000)) + expiresIn
 
     // see MakerTraits.ts
-    const makerTraits = MakerTraits.default().withExpiration(expiration).allowMultipleFills().allowPartialFills().enablePermit2().enablePostInteraction()
-
-    const sdk = new Sdk({ authKey: ONEINCH_API_KEY!, networkId: chainId, httpConnector: new FetchProviderConnector() })
-
-    const api = new Api({
-        networkId: chainId,
-        authKey: ONEINCH_API_KEY!,
-        httpConnector:  new FetchProviderConnector()
-    })
-
-    const order = await sdk.createOrder({
-        makerAsset: new Address(USDT_ADDRESS),
-        takerAsset: new Address(WETH_ADDRESS),
-        makingAmount: makingAmount, // 0.0001 WETH
-        takingAmount: takingAmount, // 0.5 USDT
-        maker: makerAddress,
-        receiver: makerAddress,
-    }, makerTraits)
+    const makerTraits = MakerTraits.default().withExpiration(expiration).allowMultipleFills().allowPartialFills().enablePostInteraction()
 
     // Attach the post-interaction that supplies the received USDT into Aave via Multicall3
     const multicallInteraction = buildMulticallInteraction(makingAmount, makerAddress);
-    const feeParams = await api.getFeeParams({
-        makerAsset: new Address(USDT_ADDRESS),
-        takerAsset: new Address(WETH_ADDRESS),
-        makerAmount: makingAmount,
-        takerAmount: takingAmount
-    })
     
     const customExtension = new ExtensionBuilder().withPostInteraction(multicallInteraction).build();
 
-    const extension = order.extension
-    const builtOrder = order.build();
     // const reconstructedOrder = LimitOrder.fromDataAndExtension(builtOrder, customExtension);
     const orderWithExtension = new LimitOrder(
         {
             makerAsset: new Address(USDT_ADDRESS),
             takerAsset: new Address(WETH_ADDRESS),
-            makingAmount: makingAmount, // 0.0001 WETH
-            takingAmount: takingAmount, // 0.5 USDT
+            makingAmount: makingAmount,
+            takingAmount: takingAmount,
             maker: makerAddress,
-            receiver: makerAddress,
+            receiver: takerAddress,
         }, 
         makerTraits, customExtension
     )
@@ -189,10 +197,16 @@ async function main() {
         typedData.message
     )
 
-    
-
     // Submit to custom resolver instead of 1inch API
-    await submitOrderToResolver(orderWithExtension, signature)
+    const orderId = await submitOrderToResolver(orderWithExtension, signature)
+    
+    console.log(`Order submitted with ID: ${orderId}`)
+    
+    // Wait a moment then fill the order
+    console.log('Waiting 2 seconds before filling order...')
+    await new Promise(resolve => setTimeout(resolve, 2000))
+    
+    await fillOrderFromResolver(orderId)
     
     // Still get orders from 1inch API for comparison
     // const orders = await api.getOrdersByMaker(makerAddress)
