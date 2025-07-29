@@ -17,7 +17,7 @@ import {
 
 dotenv.config();
 
-const chainId = 42161;
+const chainId = 31337;
 const MAKER_PRIVATE_KEY = process.env.MAKER_PRIVATE_KEY;
 const TAKER_PRIVATE_KEY = process.env.TAKER_PRIVATE_KEY;
 const ONEINCH_API_KEY = process.env.ONEINCH_API_KEY;
@@ -35,7 +35,6 @@ const AAVE_POOL_ADDRESS = '0x794a61358D6845594F94dc1DB02A252b5b4814aD';
 const MULTICALL3_ADDRESS = '0xca11bde05977b3631167028862be2a173976ca11';
 
 const POST_INTERACTION_ADDRESS = '0xB5A296FAc05Fa8B5e8707E5E525b8C51aa6137F1';
-
 
 function encodeAaveSupply(amount: bigint, trader: Address): string {
     const aavePoolAbi = [
@@ -134,7 +133,8 @@ async function submitOrderToResolver(order: LimitOrder, signature: string): Prom
             },
             body: JSON.stringify({
                 order: orderStruct,
-                signature
+                signature,
+                extension: order.extension.encode()
             })
         });
 
@@ -166,7 +166,7 @@ async function main() {
     const taker = new ethers.Wallet(TAKER_PRIVATE_KEY, provider);
     const makerAddress = new Address(maker.address)
     const takerAddress = new Address(taker.address)
-    const expiresIn = 120n // 2m
+    const expiresIn = 1200000000n // 2m
     const expiration = BigInt(Math.floor(Date.now() / 1000)) + expiresIn
 
     // see MakerTraits.ts

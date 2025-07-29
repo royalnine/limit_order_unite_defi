@@ -17,7 +17,7 @@ services:
       - "--port"
       - "8547"
       - "--chain-id"
-      - "42161"
+      - "31337"
       - "--no-rate-limit"
     ports:
       - "8547:8547"

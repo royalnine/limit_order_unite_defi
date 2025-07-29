@@ -1,15 +1,12 @@
 import express from 'express';
 import { createHash } from 'crypto';
-import { ethers, Interface } from 'ethers';
+import { ethers } from 'ethers';
 import dotenv from 'dotenv';
 import {
   LimitOrder,
-  MakerTraits,
   Address,
-  ExtensionBuilder,
-  Interaction
+  Extension
 } from '@1inch/limit-order-sdk';
-import { trim0x } from '@1inch/byte-utils'
 import { TakerTraits } from '@1inch/limit-order-sdk'
 
 
@@ -29,6 +26,7 @@ interface LimitOrderV4Struct {
 interface SubmitOrderRequest {
   order: LimitOrderV4Struct;
   signature: string;
+  extension: string;
 }
 
 interface StoredOrder {
@@ -39,13 +37,7 @@ interface StoredOrder {
   reconstructedOrder?: LimitOrder;
 }
 
-// Constants from backend
-const WETH_ADDRESS = '0x82aF49447D8a07e3bd95BD0d56f35241523fBab1';
-const USDT_ADDRESS = '0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9';
-const AAVE_POOL_ADDRESS = '0x794a61358D6845594F94dc1DB02A252b5b4814aD';
-const MULTICALL3_ADDRESS = '0xca11bde05977b3631167028862be2a173976ca11';
 const LIMIT_ORDER_PROTOCOL_ADDRESS = '0x111111125421cA6dc452d289314280a0f8842A65';
-const POST_INTERACTION_ADDRESS = '0xB5A296FAc05Fa8B5e8707E5E525b8C51aa6137F1';
 const MAKER_PRIVATE_KEY = process.env.MAKER_PRIVATE_KEY;
 const TAKER_PRIVATE_KEY = process.env.TAKER_PRIVATE_KEY;
 
@@ -64,54 +56,10 @@ const provider = new ethers.JsonRpcProvider(process.env.ARB_RPC_URL || 'https://
 const makerWallet = new ethers.Wallet(MAKER_PRIVATE_KEY!, provider);
 const takerWallet = new ethers.Wallet(TAKER_PRIVATE_KEY!, provider);
 
-function encodeAaveSupply(amount: bigint, trader: Address): string {
-    const aavePoolAbi = [
-        'function supply(address asset, uint256 amount, address onBehalfOf, uint16 referralCode)'
-    ];
-    const poolInterface = new Interface(aavePoolAbi);
 
-    const supplyCalldata = poolInterface.encodeFunctionData('supply', [
-        WETH_ADDRESS,
-        amount,
-        trader.toString(),
-        0 // referralCode
-    ]);
-
-    return supplyCalldata;
-}
-
-function encodeCompleteMulticall(multicallData: string): string {
-    return MULTICALL3_ADDRESS + trim0x(multicallData)
-}
-
-function buildMulticallInteraction(aaveAmount: bigint, onBehalfOf: Address): Interaction {
-    const multicallAbi = [
-        'function aggregate3Value(tuple(address target,bool allowFailure,uint256 value,bytes callData)[] calls) returns (tuple(bool success, bytes returnData)[] returnData)'
-    ];
-
-    const multicallInterface = new Interface(multicallAbi);
-
-    const supplyCalldata = encodeAaveSupply(aaveAmount, onBehalfOf);
-
-    const multicallData = multicallInterface.encodeFunctionData('aggregate3Value', [
-        [[AAVE_POOL_ADDRESS, false, 0, supplyCalldata]]
-    ]);
-
-    const completeMulticallData = encodeCompleteMulticall(multicallData)
-
-    return new Interaction(new Address(POST_INTERACTION_ADDRESS), completeMulticallData);
-}
-
-function reconstructOrderWithExtension(orderStruct: LimitOrderV4Struct): LimitOrder {
-    const makerAddress = new Address(orderStruct.maker);
-    const makingAmount = BigInt(orderStruct.makingAmount);
-    
-    // Build the multicall interaction (same as in backend)
-    const multicallInteraction = buildMulticallInteraction(makingAmount, makerAddress);
-    const customExtension = new ExtensionBuilder().withPostInteraction(multicallInteraction).build();
-    
-    // Reconstruct the order with extension
-    const reconstructedOrder = LimitOrder.fromDataAndExtension(orderStruct, customExtension);
+function reconstructOrderWithExtension(orderStruct: LimitOrderV4Struct, extension: string): LimitOrder {
+    const extensionObj = Extension.decode(extension);
+    const reconstructedOrder = LimitOrder.fromDataAndExtension(orderStruct, extensionObj);
     
     return reconstructedOrder;
 }
@@ -128,7 +76,7 @@ function generateOrderId(order: LimitOrderV4Struct): string {
 
 app.post('/submit-order', (req, res) => {
   try {
-    const { order, signature }: SubmitOrderRequest = req.body;
+    const { order, signature, extension }: SubmitOrderRequest = req.body;
     
     if (!order || !signature) {
       return res.status(400).json({ error: 'Missing order or signature' });
@@ -141,7 +89,7 @@ app.post('/submit-order', (req, res) => {
     }
 
     // Reconstruct the order with extensions
-    const reconstructedOrder = reconstructOrderWithExtension(order);
+    const reconstructedOrder = reconstructOrderWithExtension(order, extension);
     
     const storedOrder: StoredOrder = {
       id: orderId,
@@ -259,7 +207,8 @@ async function fillOrderOnProtocol(storedOrder: StoredOrder): Promise<any> {
     console.log(`  ${takingAmount.toString()} \\`);
     console.log(`  ${trait} \\`);
     console.log(`  ${args} \\`);
-    console.log(`  --trace`)
+    console.log(`  --trace \\`)
+    console.log(`  --from ${takerWallet.address}`)
     console.log('================================\n');
 
     // Check and approve limit order protocol contract for the taker asset
