@@ -41,7 +41,7 @@ const WETH_ADDRESS = '0x82aF49447D8a07e3bd95BD0d56f35241523fBab1';
 const USDT_ADDRESS = '0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9';
 const AAVE_POOL_ADDRESS = '0x794a61358D6845594F94dc1DB02A252b5b4814aD';
 const MULTICALL3_ADDRESS = '0xca11bde05977b3631167028862be2a173976ca11';
-const LIMIT_ORDER_PROTOCOL_ADDRESS = '0x7F069df72b7A39bCE9806e3AfaF579E54D8CF2b9';
+const LIMIT_ORDER_PROTOCOL_ADDRESS = '0x111111125421cA6dc452d289314280a0f8842A65';
 
 const orderStorage = new Map<string, StoredOrder>();
 
@@ -170,7 +170,7 @@ async function fillOrderOnProtocol(storedOrder: StoredOrder): Promise<any> {
     }
 
     const limitOrderProtocolAbi = [
-      'function fillOrder((uint256 salt, address maker, address receiver, address makerAsset, address takerAsset, uint256 makingAmount, uint256 takingAmount, uint256 makerTraits) order, bytes signature, uint256 makingAmount, uint256 takingAmount, uint256 thresholdAmount) returns (uint256, uint256)'
+      'function fillOrderArgs((uint256 salt, uint256 maker, uint256 receiver, uint256 makerAsset, uint256 takerAsset, uint256 makingAmount, uint256 takingAmount, uint256 makerTraits) order, bytes32 r, bytes32 vs, uint256 amount, uint256 takerTraits, bytes args) returns (uint256, uint256, bytes32)'
     ];
 
     const contract = new ethers.Contract(
@@ -181,15 +181,69 @@ async function fillOrderOnProtocol(storedOrder: StoredOrder): Promise<any> {
 
     const orderStruct = storedOrder.reconstructedOrder.build();
     const takingAmount = BigInt(orderStruct.takingAmount);
-    const makingAmount = BigInt(orderStruct.makingAmount);
+
+    // Parse signature into r and vs components for compact signature format
+    const signature = storedOrder.signature;
+    console.log('Full signature:', signature);
+    console.log('Signature length:', signature.length);
+    
+    const r = signature.slice(0, 66); // First 32 bytes + 0x
+    const s = signature.slice(66, 130); // Next 32 bytes
+    const v = signature.slice(130, 132); // Last byte
+    
+    console.log('r:', r, 'length:', r.length);
+    console.log('s:', s, 'length:', s.length);
+    console.log('v:', v, 'length:', v.length);
+    
+    // EIP-2098 compact signature: modify the first byte of s based on v
+    const firstByteOfS = parseInt(s.slice(0, 2), 16);
+    const recoveryId = parseInt(v, 16) - 27; // 0 or 1
+    const modifiedFirstByte = recoveryId === 1 ? firstByteOfS | 0x80 : firstByteOfS;
+    const vs = '0x' + modifiedFirstByte.toString(16).padStart(2, '0') + s.slice(2);
+
+    console.log('vs:', vs, 'length:', vs.length);
+
+    // Add comprehensive logging for cast call construction
+    console.log('\n=== CAST CALL CONSTRUCTION ===');
+    console.log('Contract Address:', LIMIT_ORDER_PROTOCOL_ADDRESS);
+    console.log('Function: fillOrderArgs((uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256),bytes32,bytes32,uint256,uint256,bytes)');
+    console.log('\nOrder Struct Parameters:');
+    console.log(`  salt: ${orderStruct.salt}`);
+    console.log(`  maker: ${orderStruct.maker}`);
+    console.log(`  receiver: ${orderStruct.receiver}`);
+    console.log(`  makerAsset: ${orderStruct.makerAsset}`);
+    console.log(`  takerAsset: ${orderStruct.takerAsset}`);
+    console.log(`  makingAmount: ${orderStruct.makingAmount}`);
+    console.log(`  takingAmount: ${orderStruct.takingAmount}`);
+    console.log(`  makerTraits: ${orderStruct.makerTraits}`);
+    console.log(`\nSignature Parameters:`);
+    console.log(`  r: ${r}`);
+    console.log(`  vs: ${vs}`);
+    console.log(`\nOther Parameters:`);
+    console.log(`  amount: ${takingAmount.toString()}`);
+    console.log(`  takerTraits: 0`);
+    console.log(`  args: 0x`);
+    
+    console.log('\n=== COMPLETE CAST COMMAND ===');
+    console.log(`cast call --rpc-url http://localhost:8547 \\`);
+    console.log(`  ${LIMIT_ORDER_PROTOCOL_ADDRESS} \\`);
+    console.log(`  "fillOrderArgs((uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256),bytes32,bytes32,uint256,uint256,bytes)" \\`);
+    console.log(`  "(${orderStruct.salt},${orderStruct.maker},${orderStruct.receiver},${orderStruct.makerAsset},${orderStruct.takerAsset},${orderStruct.makingAmount},${orderStruct.takingAmount},${orderStruct.makerTraits})" \\`);
+    console.log(`  ${r} \\`);
+    console.log(`  ${vs} \\`);
+    console.log(`  ${takingAmount.toString()} \\`);
+    console.log(`  0 \\`);
+    console.log(`  0x`);
+    console.log('================================\n');
 
     // Fill the entire order
-    const tx = await contract.fillOrder(
+    const tx = await contract.fillOrderArgs(
       orderStruct,
-      storedOrder.signature,
-      makingAmount,
-      takingAmount,
-      takingAmount // thresholdAmount - minimum amount we're willing to receive
+      r,
+      vs,
+      takingAmount, // amount - how much we want to take
+      0, // takerTraits - no special traits
+      '0x' // args - empty args
     );
 
     const receipt = await tx.wait();
@@ -214,7 +268,7 @@ app.post('/fill-order/:id', async (req, res) => {
       return res.status(404).json({ error: 'Order not found' });
     }
 
-    if (!process.env.FILLER_PRIVATE_KEY) {
+    if (!process.env.PRIVATE_KEY) {
       return res.status(500).json({ error: 'Filler private key not configured' });
     }
 
@@ -231,7 +285,7 @@ app.post('/fill-order/:id', async (req, res) => {
     
   } catch (error) {
     console.error('Error filling order:', error);
-    res.status(500).json({ 
+    res.status(500).json({
       error: 'Failed to fill order',
       details: error instanceof Error ? error.message : 'Unknown error'
     });
