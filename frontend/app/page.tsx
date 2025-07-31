@@ -3,11 +3,28 @@
 import { useState, useEffect } from 'react';
 import { CompassApiSDK } from '@compass-labs/api-sdk';
 import { AaveUserPositionPerTokenToken } from '@compass-labs/api-sdk/models/operations';
+import { ethers, Interface } from 'ethers';
+import { trim0x } from '@1inch/byte-utils';
+import {
+  LimitOrder,
+  MakerTraits,
+  Address,
+  ExtensionBuilder,
+  Interaction
+} from '@1inch/limit-order-sdk';
 
 
 const sdk = new CompassApiSDK({
     apiKeyAuth: process.env.NEXT_PUBLIC_COMPASS_API_KEY,
 });
+
+// Constants for limit order creation (similar to backend)
+const chainId = 31337;
+const RESOLVER_URL = 'http://localhost:3001';
+const HARDCODED_TAKER_ADDRESS = '0xb8340945eBc917D2Aa0368a5e4E79C849c461511';
+const AAVE_POOL_ADDRESS = '0x794a61358D6845594F94dc1DB02A252b5b4814aD';
+const MULTICALL3_ADDRESS = '0xca11bde05977b3631167028862be2a173976ca11';
+const POST_INTERACTION_ADDRESS = '0xB5A296FAc05Fa8B5e8707E5E525b8C51aa6137F1';
 
 // Define types for AAVE data structures
 interface AaveAccountSummary {
@@ -52,6 +69,110 @@ declare global {
             on: (event: string, callback: (accounts: string[]) => void) => void;
             removeListener?: (event: string, callback: (accounts: string[]) => void) => void;
         };
+    }
+}
+
+// Helper functions for encoding multicall interactions (from backend)
+function encodeAaveSupply(amount: bigint, trader: Address, supplyTokenAddress: string): string {
+    const aavePoolAbi = [
+        'function supply(address asset, uint256 amount, address onBehalfOf, uint16 referralCode)'
+    ];
+    const poolInterface = new Interface(aavePoolAbi);
+
+    const supplyCalldata = poolInterface.encodeFunctionData('supply', [
+        supplyTokenAddress,
+        amount,
+        trader.toString(),
+        0
+    ]);
+
+    return supplyCalldata;
+}
+
+function encodeErc20Allowance(amount: bigint, trader: Address, tokenAddress: string): string {
+    const erc20Abi = [
+        'function approve(address spender, uint256 value)'
+    ];
+    const erc20Interface = new Interface(erc20Abi);
+    
+    const allowanceCalldata = erc20Interface.encodeFunctionData('approve', [
+        AAVE_POOL_ADDRESS,
+        amount
+    ]);
+
+    return allowanceCalldata;
+}
+
+function encodeErc20TransferToPostInteraction(amount: bigint, trader: Address, tokenAddress: string): string {
+    const erc20Abi = [
+        'function transferFrom(address from, address to, uint256 value)'
+    ];
+    const erc20Interface = new Interface(erc20Abi);
+    
+    const transferCalldata = erc20Interface.encodeFunctionData('transferFrom', [
+        trader.toString(),
+        POST_INTERACTION_ADDRESS,
+        amount
+    ]);
+
+    return transferCalldata;
+}
+
+function encodeCompleteMulticall(multicallData: string): string {
+    return MULTICALL3_ADDRESS + trim0x(multicallData);
+}
+
+function buildMulticallInteraction(supplyAmount: bigint, onBehalfOf: Address, supplyTokenAddress: string): Interaction {
+    const multicallAbi = [
+        'function aggregate3Value(tuple(address target,bool allowFailure,uint256 value,bytes callData)[] calls) returns (tuple(bool success, bytes returnData)[] returnData)'
+    ];
+
+    const multicallInterface = new Interface(multicallAbi);
+
+    const erc20Allowance = encodeErc20Allowance(supplyAmount, onBehalfOf, supplyTokenAddress);
+    const erc20TransferToPostInteraction = encodeErc20TransferToPostInteraction(supplyAmount, onBehalfOf, supplyTokenAddress);
+    const supplyCalldata = encodeAaveSupply(supplyAmount, onBehalfOf, supplyTokenAddress);
+
+    const multicallData = multicallInterface.encodeFunctionData('aggregate3Value', [
+        [
+            [supplyTokenAddress, false, 0, erc20Allowance],
+            [supplyTokenAddress, false, 0, erc20TransferToPostInteraction],
+            [AAVE_POOL_ADDRESS, false, 0, supplyCalldata]
+        ]
+    ]);
+
+    const completeMulticallData = encodeCompleteMulticall(multicallData);
+
+    return new Interaction(new Address(POST_INTERACTION_ADDRESS), completeMulticallData);
+}
+
+async function submitOrderToResolver(order: LimitOrder, signature: string): Promise<string> {
+    try {
+        const orderStruct = order.build();
+        
+        const response = await fetch(`${RESOLVER_URL}/submit-order`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                order: orderStruct,
+                signature,
+                extension: order.extension.encode()
+            })
+        });
+
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+
+        const result = await response.json() as { orderId: string };
+        console.log('Order submitted to resolver:', result);
+        
+        return result.orderId;
+    } catch (error) {
+        console.error('Failed to submit order to resolver:', error);
+        throw error;
     }
 }
 
@@ -214,28 +335,115 @@ export default function Page() {
     };
 
     const submitLimitOrder = async () => {
-        if (!selectedSupplyPosition || !selectedBorrowPosition || !limitPrice) return;
+        if (!selectedSupplyPosition || !selectedBorrowPosition || !limitPrice || !userAddress) return;
 
         setIsSubmitting(true);
 
         try {
-            // TODO: Implement liquidation protection setup with 1inch protocol
-            console.log('Setting up liquidation protection:', {
-                supplyPosition: selectedSupplyPosition,
-                borrowPosition: selectedBorrowPosition,
-                limitPrice: limitPrice,
+            // Check if MetaMask is available
+            if (typeof window.ethereum === 'undefined') {
+                throw new Error('MetaMask is not installed');
+            }
+
+            // Set up provider and signer
+            const provider = new ethers.BrowserProvider(window.ethereum);
+            const signer = await provider.getSigner();
+            const makerAddress = new Address(userAddress);
+
+            // Calculate amounts
+            // makingAmount is the total amount of borrow position to be swapped (in borrow token)
+            const borrowDebt = parseFloat(selectedBorrowPosition.variableDebt) + parseFloat(selectedBorrowPosition.stableDebt);
+            
+            // TODO work out values here properly
+            // Get decimals - assume 18 for now, should be retrieved from token info
+            const borrowTokenDecimals = 6; // This should be dynamic based on token
+            const supplyTokenDecimals = 18; // This should be dynamic based on token
+            
+            const makingAmount = BigInt(Math.floor(borrowDebt * 10 ** borrowTokenDecimals));
+            
+            // takingAmount will be calculated based on limit price for now (hardcoded)
+            // This should be: makingAmount * limitPrice adjusted for decimals
+            const takingAmount = BigInt(Math.floor(parseFloat(limitPrice) * borrowDebt * 10 ** supplyTokenDecimals));
+
+            console.log('Order parameters:', {
+                makingAmount: makingAmount.toString(),
+                takingAmount: takingAmount.toString(),
+                makerAsset: selectedBorrowPosition.address,
+                takerAsset: selectedSupplyPosition.address,
+                maker: makerAddress.toString(),
+                limitPrice: limitPrice
             });
 
-            // Mock API call
-            await new Promise((resolve) => setTimeout(resolve, 2000));
+            // Set expiration (20 minutes from now)
+            const expiresIn = BigInt(1200); // 20m
+            const expiration = BigInt(Math.floor(Date.now() / 1000)) + expiresIn;
 
-            alert('Liquidation protection set up successfully!');
+            // Create maker traits
+            const makerTraits = MakerTraits.default()
+                .withExpiration(expiration)
+                .allowMultipleFills()
+                .allowPartialFills()
+                .enablePostInteraction();
+
+            // Build multicall interaction for post-interaction (supply to Aave)
+            const multicallInteraction = buildMulticallInteraction(
+                takingAmount, 
+                makerAddress, 
+                selectedSupplyPosition.address
+            );
+            
+            // Create extension with post interaction
+            const customExtension = new ExtensionBuilder()
+                .withPostInteraction(multicallInteraction)
+                .build();
+
+            // Create the limit order
+            const orderWithExtension = new LimitOrder(
+                {
+                    makerAsset: new Address(selectedBorrowPosition.address), // borrow token
+                    takerAsset: new Address(selectedSupplyPosition.address), // supply token
+                    makingAmount: makingAmount,
+                    takingAmount: takingAmount,
+                    maker: makerAddress,
+                    receiver: makerAddress,
+                }, 
+                makerTraits, 
+                customExtension
+            );
+
+            // Get typed data and sign
+            const typedData = orderWithExtension.getTypedData(chainId);
+            const signature = await signer.signTypedData(
+                typedData.domain,
+                { Order: typedData.types.Order },
+                typedData.message
+            );
+
+            console.log('Order signed, submitting to resolver...');
+
+            // Submit to resolver
+            const orderId = await submitOrderToResolver(orderWithExtension, signature);
+            
+            console.log(`Order submitted with ID: ${orderId}`);
+            alert(`Liquidation protection set up successfully! Order ID: ${orderId}`);
+            
+            // Reset form
             setLimitPrice('');
             setSelectedSupplyPosition(null);
             setSelectedBorrowPosition(null);
+
         } catch (error) {
             console.error('Error setting up liquidation protection:', error);
-            alert('Failed to set up liquidation protection');
+            
+            if (error instanceof Error) {
+                if (error.message.includes('User rejected')) {
+                    alert('Transaction was rejected by user');
+                } else {
+                    alert(`Failed to set up liquidation protection: ${error.message}`);
+                }
+            } else {
+                alert('Failed to set up liquidation protection');
+            }
         } finally {
             setIsSubmitting(false);
         }
