@@ -1,49 +1,242 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { CompassApiSDK } from '@compass-labs/api-sdk';
+import { AaveUserPositionPerTokenToken } from '@compass-labs/api-sdk/models/operations';
+
+
+const sdk = new CompassApiSDK({
+    apiKeyAuth: process.env.NEXT_PUBLIC_COMPASS_API_KEY,
+});
+
+// Define types for AAVE data structures
+interface AaveAccountSummary {
+    maximumLoanToValueRatio: string;
+    healthFactor: string;
+    totalCollateral: string;
+    totalDebt: string;
+    availableBorrows: string;
+    liquidationThreshold: string;
+}
+
+interface AaveSupportedToken {
+    symbol: string;
+    address: string;
+    supplyingEnabled: boolean;
+    borrowingEnabled: boolean;
+}
+
+interface AaveSupportedTokensResponse {
+    tokens: AaveSupportedToken[];
+}
+
+interface AaveTokenPosition {
+    symbol: string;
+    address: string;
+    tokenBalance: string;
+    stableDebt: string;
+    variableDebt: string;
+    principalStableDebt: string;
+    principalVariableDebt: string;
+    stableBorrowRate: string;
+    stableBorrowRateForNewLoans: string;
+    variableBorrowRate: string;
+    liquidityRate: string;
+}
+
+// Extend the Window interface to include ethereum
+declare global {
+    interface Window {
+        ethereum?: {
+            request: (args: { method: string; params?: any[] }) => Promise<any>;
+            on: (event: string, callback: (accounts: string[]) => void) => void;
+            removeListener?: (event: string, callback: (accounts: string[]) => void) => void;
+        };
+    }
+}
 
 export default function Page() {
     const [walletConnected, setWalletConnected] = useState(false);
-    const [aavePositions, setAavePositions] = useState([]);
-    const [selectedPosition, setSelectedPosition] = useState(null);
+    const [userAddress, setUserAddress] = useState('');
+    const [accountSummary, setAccountSummary] = useState<AaveAccountSummary | null>(null);
+    const [tokenPositions, setTokenPositions] = useState<AaveTokenPosition[]>([]);
+    const [supportedTokens, setSupportedTokens] = useState<AaveSupportedTokensResponse>();
+    const [selectedPosition, setSelectedPosition] = useState<AaveTokenPosition | null>(null);
+    const [isLoading, setIsLoading] = useState(false);
     const [limitPrice, setLimitPrice] = useState('');
     const [isSubmitting, setIsSubmitting] = useState(false);
+    const [isConnecting, setIsConnecting] = useState(false);
 
-    // TODO: Implement AAVE positions loading
-    const loadAavePositions = async () => {
-        // Template for AAVE positions loading
-        // This will be implemented by hand later
-        console.log('Loading AAVE positions...');
+    // Check for existing wallet connection on component mount
+    useEffect(() => {
+        const checkWalletConnection = async () => {
+            if (typeof window.ethereum !== 'undefined') {
+                try {
+                    const accounts = await window.ethereum.request({
+                        method: 'eth_accounts',
+                    });
+                    
+                    if (accounts.length > 0) {
+                        setUserAddress(accounts[0]);
+                        setWalletConnected(true);
+                        await loadAaveData();
+                    }
+                } catch (error) {
+                    console.error('Error checking wallet connection:', error);
+                }
+            }
+        };
 
-        // Mock data for UI development
-        const mockPositions = [
-            {
-                id: '1',
-                asset: 'ETH',
-                collateral: '2.5',
-                borrowed: '3500',
-                borrowedAsset: 'USDC',
-                healthFactor: '1.45',
-                liquidationPrice: '1200',
-            },
-            {
-                id: '2',
-                asset: 'WBTC',
-                collateral: '0.1',
-                borrowed: '2800',
-                borrowedAsset: 'USDT',
-                healthFactor: '1.32',
-                liquidationPrice: '28000',
-            },
-        ];
+        checkWalletConnection();
 
-        setAavePositions(mockPositions);
+        // Listen for account changes
+        if (typeof window.ethereum !== 'undefined') {
+            const handleAccountsChanged = (accounts: string[]) => {
+                if (accounts.length === 0) {
+                    // User disconnected their wallet
+                    setWalletConnected(false);
+                    setUserAddress('');
+                    setAccountSummary(null);
+                    setTokenPositions([]);
+                    setSupportedTokens(undefined);
+                } else {
+                    // User switched accounts
+                    setUserAddress(accounts[0]);
+                    loadAaveData();
+                }
+            };
+
+            window.ethereum.on('accountsChanged', handleAccountsChanged);
+
+            // Cleanup listener on component unmount
+            return () => {
+                if (window.ethereum?.removeListener) {
+                    window.ethereum.removeListener('accountsChanged', handleAccountsChanged);
+                }
+            };
+        }
+    }, []);
+
+    // Load AAVE data using Compass API
+    const loadAaveData = async () => {
+        if (!userAddress) return;
+        
+        setIsLoading(true);
+        
+        try {
+            console.log('Loading AAVE data for address:', userAddress);
+            
+            // Step 1: Get account summary (total health factor and other metrics)
+            const summaryResponse = await sdk.aaveV3.userPositionSummary({
+                chain: 'base:mainnet', // You can make this configurable
+                user: userAddress,
+            });
+            
+            if (summaryResponse) {
+                setAccountSummary(summaryResponse);
+                console.log('Account summary:', summaryResponse);
+            }
+            
+            // Step 2: Get supported tokens
+            const tokensResponse = await sdk.aaveV3.aaveSupportedTokens({
+                chain: 'base:mainnet', // You can make this configurable
+            });
+            
+            if (tokensResponse) {
+                setSupportedTokens(tokensResponse);
+                console.log('Supported tokens:', tokensResponse);
+                
+                // Step 3: Get position for each supported token
+                const tokenPositions: AaveTokenPosition[] = [];
+                
+                for (const token of tokensResponse.tokens) {
+                    try {
+                        const positionResponse = await sdk.aaveV3.userPositionPerToken({
+                            chain: 'base:mainnet',
+                            user: userAddress,
+                            token: token.address as AaveUserPositionPerTokenToken,
+                        });
+                        
+                        if (positionResponse) {
+                            // Only include positions where user has some balance or debt
+                            const hasBalance = parseFloat(positionResponse.tokenBalance) > 0;
+                            const hasDebt = parseFloat(positionResponse.stableDebt) > 0 || 
+                                          parseFloat(positionResponse.variableDebt) > 0;
+                            
+                            if (hasBalance || hasDebt) {
+                                tokenPositions.push({
+                                    ...positionResponse,
+                                    symbol: token.symbol,
+                                    address: token.address,
+                                });
+                            }
+                        }
+                    } catch (error) {
+                        console.warn(`Failed to fetch position for token ${token.symbol}:`, error);
+                    }
+                }
+                
+                setTokenPositions(tokenPositions);
+                console.log('Token positions:', tokenPositions);
+            }
+            
+        } catch (error) {
+            console.error('Error loading AAVE data:', error);
+            // You might want to show an error message to the user
+        } finally {
+            setIsLoading(false);
+        }
     };
 
     const connectWallet = async () => {
-        // TODO: Implement wallet connection
-        setWalletConnected(true);
-        await loadAavePositions();
+        // Prevent multiple simultaneous connection attempts
+        if (isConnecting) {
+            console.log('Wallet connection already in progress...');
+            return;
+        }
+
+        setIsConnecting(true);
+        
+        try {
+            // Check if MetaMask is installed
+            if (typeof window.ethereum === 'undefined') {
+                alert('MetaMask is not installed. Please install MetaMask to continue.');
+                return;
+            }
+
+            // First try to get existing accounts without requesting
+            let accounts = await window.ethereum.request({
+                method: 'eth_accounts',
+            });
+
+            // If no accounts, request access
+            if (accounts.length === 0) {
+                accounts = await window.ethereum.request({
+                    method: 'eth_requestAccounts',
+                });
+            }
+
+            if (accounts.length > 0) {
+                setUserAddress(accounts[0]);
+                setWalletConnected(true);
+                await loadAaveData();
+                console.log('Wallet connected:', accounts[0]);
+            }
+        } catch (error: any) {
+            console.error('Failed to connect wallet:', error);
+            
+            if (error.code === 4001) {
+                // User rejected the connection request
+                alert('Please connect your wallet to continue.');
+            } else if (error.message && error.message.includes('already pending')) {
+                // Handle the specific case of pending requests
+                alert('A wallet connection request is already pending. Please check MetaMask and complete the request.');
+            } else {
+                alert('Failed to connect wallet. Please try again.');
+            }
+        } finally {
+            setIsConnecting(false);
+        }
     };
 
     const submitLimitOrder = async () => {
@@ -87,14 +280,17 @@ export default function Page() {
                     {!walletConnected ? (
                         <button
                             onClick={connectWallet}
-                            className="px-6 py-2 bg-gradient-to-r from-purple-600 to-pink-600 rounded-lg font-medium hover:from-purple-700 hover:to-pink-700 transition-all duration-200 shadow-lg hover:shadow-purple-500/25"
+                            disabled={isConnecting}
+                            className="px-6 py-2 bg-gradient-to-r from-purple-600 to-pink-600 rounded-lg font-medium hover:from-purple-700 hover:to-pink-700 transition-all duration-200 shadow-lg hover:shadow-purple-500/25 disabled:opacity-50 disabled:cursor-not-allowed"
                         >
-                            Connect Wallet
+                            {isConnecting ? 'Connecting...' : 'Connect Wallet'}
                         </button>
                     ) : (
                         <div className="flex items-center space-x-2">
                             <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
-                            <span className="text-sm text-gray-300">Wallet Connected</span>
+                            <span className="text-sm text-gray-300">
+                                {userAddress ? `${userAddress.slice(0, 6)}...${userAddress.slice(-4)}` : 'Wallet Connected'}
+                            </span>
                         </div>
                     )}
                 </div>
@@ -125,9 +321,10 @@ export default function Page() {
                         </p>
                         <button
                             onClick={connectWallet}
-                            className="px-8 py-3 bg-gradient-to-r from-purple-600 to-pink-600 rounded-lg font-medium hover:from-purple-700 hover:to-pink-700 transition-all duration-200 shadow-lg hover:shadow-purple-500/25"
+                            disabled={isConnecting}
+                            className="px-8 py-3 bg-gradient-to-r from-purple-600 to-pink-600 rounded-lg font-medium hover:from-purple-700 hover:to-pink-700 transition-all duration-200 shadow-lg hover:shadow-purple-500/25 disabled:opacity-50 disabled:cursor-not-allowed"
                         >
-                            Connect Wallet to Get Started
+                            {isConnecting ? 'Connecting...' : 'Connect Wallet to Get Started'}
                         </button>
                     </div>
                 ) : (
@@ -151,64 +348,115 @@ export default function Page() {
                                 Your AAVE Positions
                             </h2>
 
-                            {aavePositions.length === 0 ? (
+                            {isLoading ? (
                                 <div className="text-center py-8">
                                     <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-400 mx-auto mb-4"></div>
-                                    <p className="text-gray-400">Loading positions...</p>
+                                    <p className="text-gray-400">Loading AAVE data...</p>
                                 </div>
                             ) : (
-                                <div className="space-y-4">
-                                    {aavePositions.map((position) => (
-                                        <div
-                                            key={position.id}
-                                            className={`p-4 rounded-lg border cursor-pointer transition-all duration-200 ${
-                                                selectedPosition?.id === position.id
-                                                    ? 'border-purple-500 bg-purple-500/10'
-                                                    : 'border-gray-700 hover:border-gray-600 bg-gray-800/50'
-                                            }`}
-                                            onClick={() => setSelectedPosition(position)}
-                                        >
-                                            <div className="flex justify-between items-start mb-3">
+                                <div className="space-y-6">
+                                    {/* Account Summary */}
+                                    {accountSummary && (
+                                        <div className="p-4 rounded-lg border border-gray-700 bg-gray-800/50">
+                                            <h3 className="font-semibold text-lg mb-4 flex items-center">
+                                                <svg className="w-4 h-4 mr-2 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                                                </svg>
+                                                Account Summary
+                                            </h3>
+                                            <div className="grid grid-cols-2 gap-4 mb-4">
                                                 <div>
-                                                    <h3 className="font-semibold text-lg">
-                                                        {position.asset}
-                                                    </h3>
-                                                    <p className="text-sm text-gray-400">
-                                                        Collateral: {position.collateral}{' '}
-                                                        {position.asset}
-                                                    </p>
+                                                                                        <p className="text-gray-400 text-sm">Total Collateral</p>
+                                    <p className="font-medium">{parseFloat(accountSummary.totalCollateral).toFixed(6)}</p>
                                                 </div>
+                                                <div>
+                                                                                        <p className="text-gray-400 text-sm">Total Debt</p>
+                                    <p className="font-medium">{parseFloat(accountSummary.totalDebt).toFixed(6)}</p>
+                                                </div>
+                                                <div>
+                                                                                        <p className="text-gray-400 text-sm">Available Borrows</p>
+                                    <p className="font-medium">{parseFloat(accountSummary.availableBorrows).toFixed(6)}</p>
+                                                </div>
+                                                <div>
+                                                                                        <p className="text-gray-400 text-sm">Max LTV</p>
+                                    <p className="font-medium">{(parseFloat(accountSummary.maximumLoanToValueRatio) * 100).toFixed(2)}%</p>
+                                                </div>
+                                            </div>
+                                            <div className="flex justify-between items-center">
+                                                <span className="text-gray-400 text-sm">Account Health Factor</span>
                                                 <div
-                                                    className={`px-2 py-1 rounded text-xs font-medium ${
-                                                        parseFloat(position.healthFactor) > 1.5
+                                                    className={`px-3 py-1 rounded text-sm font-medium ${
+                                                        parseFloat(accountSummary.healthFactor) > 1.5
                                                             ? 'bg-green-500/20 text-green-400'
-                                                            : parseFloat(position.healthFactor) >
-                                                                1.2
+                                                            : parseFloat(accountSummary.healthFactor) > 1.2
                                                               ? 'bg-yellow-500/20 text-yellow-400'
                                                               : 'bg-red-500/20 text-red-400'
                                                     }`}
                                                 >
-                                                    HF: {position.healthFactor}
-                                                </div>
-                                            </div>
-                                            <div className="grid grid-cols-2 gap-4 text-sm">
-                                                <div>
-                                                    <p className="text-gray-400">Borrowed</p>
-                                                    <p className="font-medium">
-                                                        {position.borrowed} {position.borrowedAsset}
-                                                    </p>
-                                                </div>
-                                                <div>
-                                                    <p className="text-gray-400">
-                                                        Liquidation Price
-                                                    </p>
-                                                    <p className="font-medium">
-                                                        ${position.liquidationPrice}
-                                                    </p>
+                                                    {parseFloat(accountSummary.healthFactor).toFixed(3)}
                                                 </div>
                                             </div>
                                         </div>
-                                    ))}
+                                    )}
+
+                                    {/* Individual Token Positions */}
+                                    {tokenPositions.length === 0 ? (
+                                        <div className="text-center py-8">
+                                            <p className="text-gray-400">No active positions found</p>
+                                        </div>
+                                    ) : (
+                                        <div className="space-y-4">
+                                            <h3 className="font-semibold text-lg">Individual Token Positions</h3>
+                                            {tokenPositions.map((position) => (
+                                                <div
+                                                    key={position.address}
+                                                    className={`p-4 rounded-lg border cursor-pointer transition-all duration-200 ${
+                                                        selectedPosition?.address === position.address
+                                                            ? 'border-purple-500 bg-purple-500/10'
+                                                            : 'border-gray-700 hover:border-gray-600 bg-gray-800/50'
+                                                    }`}
+                                                    onClick={() => setSelectedPosition(position)}
+                                                >
+                                                    <div className="flex justify-between items-start mb-3">
+                                                        <div>
+                                                            <h4 className="font-semibold text-lg">
+                                                                {position.symbol}
+                                                            </h4>
+                                                            <p className="text-sm text-gray-400">
+                                                                aToken Balance: {(parseFloat(position.tokenBalance) / Math.pow(10, 18)).toFixed(6)}
+                                                            </p>
+                                                        </div>
+                                                    </div>
+                                                    <div className="grid grid-cols-2 gap-4 text-sm">
+                                                        <div>
+                                                            <p className="text-gray-400">Variable Debt</p>
+                                                            <p className="font-medium">
+                                                                {(parseFloat(position.variableDebt) / Math.pow(10, 18)).toFixed(6)} {position.symbol}
+                                                            </p>
+                                                        </div>
+                                                        <div>
+                                                            <p className="text-gray-400">Stable Debt</p>
+                                                            <p className="font-medium">
+                                                                {(parseFloat(position.stableDebt) / Math.pow(10, 18)).toFixed(6)} {position.symbol}
+                                                            </p>
+                                                        </div>
+                                                        <div>
+                                                            <p className="text-gray-400">Variable Rate</p>
+                                                            <p className="font-medium">
+                                                                {(parseFloat(position.variableBorrowRate) / 1e25 * 100).toFixed(2)}%
+                                                            </p>
+                                                        </div>
+                                                        <div>
+                                                            <p className="text-gray-400">Liquidity Rate</p>
+                                                            <p className="font-medium">
+                                                                {(parseFloat(position.liquidityRate) / 1e25 * 100).toFixed(2)}%
+                                                            </p>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
                                 </div>
                             )}
                         </div>
@@ -259,16 +507,13 @@ export default function Page() {
                                         <h3 className="font-semibold mb-2">Selected Position</h3>
                                         <div className="text-sm text-gray-300">
                                             <p>
-                                                {selectedPosition.collateral}{' '}
-                                                {selectedPosition.asset} →{' '}
-                                                {selectedPosition.borrowed}{' '}
-                                                {selectedPosition.borrowedAsset}
+                                                aToken Balance: {(parseFloat(selectedPosition.tokenBalance) / Math.pow(10, 18)).toFixed(6)} {selectedPosition.symbol}
                                             </p>
                                             <p>
-                                                Current Liquidation Price:{' '}
-                                                <span className="text-red-400">
-                                                    ${selectedPosition.liquidationPrice}
-                                                </span>
+                                                Variable Debt: {(parseFloat(selectedPosition.variableDebt) / Math.pow(10, 18)).toFixed(6)} {selectedPosition.symbol}
+                                            </p>
+                                            <p>
+                                                Stable Debt: {(parseFloat(selectedPosition.stableDebt) / Math.pow(10, 18)).toFixed(6)} {selectedPosition.symbol}
                                             </p>
                                         </div>
                                     </div>
@@ -292,7 +537,7 @@ export default function Page() {
                                             </div>
                                         </div>
                                         <p className="text-xs text-gray-400 mt-2">
-                                            Order will execute when {selectedPosition.asset} price
+                                            Order will execute when {selectedPosition.symbol} price
                                             reaches this level
                                         </p>
                                     </div>
