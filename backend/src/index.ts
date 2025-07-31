@@ -7,10 +7,6 @@ import {
   LimitOrder,
   MakerTraits,
   Address,
-  Api,
-  FetchProviderConnector,
-  LimitOrderWithFee,
-  Sdk,
   ExtensionBuilder,
   Interaction
 } from '@1inch/limit-order-sdk';
@@ -26,14 +22,8 @@ const WETH_ADDRESS = '0x82aF49447D8a07e3bd95BD0d56f35241523fBab1';
 const USDT_ADDRESS = '0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9';
 const WETH_DECIMALS = 18;
 const USDT_DECIMALS = 6;
-
-
-// Additional protocol constants
-// Aave V3 Pool address on Arbitrum One
 const AAVE_POOL_ADDRESS = '0x794a61358D6845594F94dc1DB02A252b5b4814aD';
-// Multicall3 canonical deployment on Arbitrum One
 const MULTICALL3_ADDRESS = '0xca11bde05977b3631167028862be2a173976ca11';
-
 const POST_INTERACTION_ADDRESS = '0xB5A296FAc05Fa8B5e8707E5E525b8C51aa6137F1';
 
 function encodeAaveSupply(amount: bigint, trader: Address): string {
@@ -46,54 +36,63 @@ function encodeAaveSupply(amount: bigint, trader: Address): string {
         WETH_ADDRESS,
         amount,
         trader.toString(),
-        0 // referralCode
+        0
     ]);
 
     return supplyCalldata
 }
 
-// function encodeMorphoSupply(amount: bigint, trader: Address): string {
-//     // Morpho Blue uses supplyCollateral to deposit the collateralToken into a market.
-//     // We encode the call with a tuple representing MarketParams and other required arguments.
-//     const morphoAbi = [
-//         'function supplyCollateral((address,address,address,address,uint256) marketParams, uint256 assets, address onBehalf, bytes data)'
-//     ];
-//     const poolInterface = new Interface(morphoAbi);
+function encodeErc20Allowance(amount: bigint, trader: Address): string {
+    const erc20Abi = [
+        'function approve(address spender, uint256 value)'
+    ];
+    const erc20Interface = new Interface(erc20Abi);
+    
+    const allowanceCalldata = erc20Interface.encodeFunctionData('approve', [
+        AAVE_POOL_ADDRESS,
+        amount
+    ]);
 
-//     // TODO: replace the following placeholder addresses with real market parameters
-//     const marketParams = [
-//         USDT_ADDRESS,          // loanToken – asset that will be borrowed against
-//         WETH_ADDRESS,          // collateralToken – asset being supplied
-//         ethers.ZeroAddress,    // oracle (placeholder)
-//         ethers.ZeroAddress,    // interest rate model (placeholder)
-//         0n                     // lltv (placeholder)
-//     ];
+    return allowanceCalldata
+}
 
-//     const collateralCalldata = poolInterface.encodeFunctionData('supplyCollateral', [
-//         marketParams,
-//         amount,
-//         trader.toString(),
-//         '0x'                   // empty bytes data
-//     ]);
+function encodeErc20TransferToPostInteraction(amount: bigint, trader: Address): string {
+    const erc20Abi = [
+        'function transferFrom(address from, address to, uint256 value)'
+    ];
+    const erc20Interface = new Interface(erc20Abi);
+    
+    const transferCalldata = erc20Interface.encodeFunctionData('transferFrom', [
+        trader.toString(),
+        POST_INTERACTION_ADDRESS,
+        amount
+    ]);
 
-//     return collateralCalldata;
-// }
+    return transferCalldata
+}
+
 
 function encodeCompleteMulticall(multicallData: string): string {
     return MULTICALL3_ADDRESS + trim0x(multicallData)
 }
 
-function buildMulticallInteraction(aaveAmount: bigint, onBehalfOf: Address): Interaction {
+function buildMulticallInteraction(aaveAmount: bigint,  onBehalfOf: Address): Interaction {
     const multicallAbi = [
         'function aggregate3Value(tuple(address target,bool allowFailure,uint256 value,bytes callData)[] calls) returns (tuple(bool success, bytes returnData)[] returnData)'
     ];
 
     const multicallInterface = new Interface(multicallAbi);
 
+    const erc20Allowance = encodeErc20Allowance(aaveAmount, onBehalfOf);
+    const erc20TransferToPostInteraction = encodeErc20TransferToPostInteraction(aaveAmount, onBehalfOf);
     const supplyCalldata = encodeAaveSupply(aaveAmount, onBehalfOf);
 
     const multicallData = multicallInterface.encodeFunctionData('aggregate3Value', [
-        [[AAVE_POOL_ADDRESS, false, 0, supplyCalldata]]
+        [
+            [WETH_ADDRESS, false, 0, erc20Allowance],
+            [WETH_ADDRESS, false, 0, erc20TransferToPostInteraction],
+            [AAVE_POOL_ADDRESS, false, 0, supplyCalldata]
+        ]
     ]);
 
     const completeMulticallData = encodeCompleteMulticall(multicallData)
@@ -163,21 +162,14 @@ async function main() {
 
     const provider = new ethers.JsonRpcProvider(process.env.ARB_RPC_URL || 'https://arb1.arbitrum.io/rpc');
     const maker = new ethers.Wallet(MAKER_PRIVATE_KEY, provider);
-    const taker = new ethers.Wallet(TAKER_PRIVATE_KEY, provider);
     const makerAddress = new Address(maker.address)
-    const takerAddress = new Address(taker.address)
-    const expiresIn = 1200000000n // 2m
+    const expiresIn = 1200n // 20m
     const expiration = BigInt(Math.floor(Date.now() / 1000)) + expiresIn
 
-    // see MakerTraits.ts
     const makerTraits = MakerTraits.default().withExpiration(expiration).allowMultipleFills().allowPartialFills().enablePostInteraction()
-
-    // Attach the post-interaction that supplies the received USDT into Aave via Multicall3
-    const multicallInteraction = buildMulticallInteraction(makingAmount, makerAddress);
+    const multicallInteraction = buildMulticallInteraction(takingAmount, makerAddress);
     
     const customExtension = new ExtensionBuilder().withPostInteraction(multicallInteraction).build();
-
-    // const reconstructedOrder = LimitOrder.fromDataAndExtension(builtOrder, customExtension);
     const orderWithExtension = new LimitOrder(
         {
             makerAsset: new Address(USDT_ADDRESS),
@@ -185,7 +177,7 @@ async function main() {
             makingAmount: makingAmount,
             takingAmount: takingAmount,
             maker: makerAddress,
-            receiver: takerAddress,
+            receiver: makerAddress,
         }, 
         makerTraits, customExtension
     )

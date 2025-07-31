@@ -40,6 +40,7 @@ interface StoredOrder {
 const LIMIT_ORDER_PROTOCOL_ADDRESS = '0x111111125421cA6dc452d289314280a0f8842A65';
 const MAKER_PRIVATE_KEY = process.env.MAKER_PRIVATE_KEY;
 const TAKER_PRIVATE_KEY = process.env.TAKER_PRIVATE_KEY;
+const POST_INTERACTION_ADDRESS = '0xB5A296FAc05Fa8B5e8707E5E525b8C51aa6137F1';
 
 const ERC20_ABI = [
   'function allowance(address owner, address spender) view returns (uint256)',
@@ -177,46 +178,43 @@ async function fillOrderOnProtocol(storedOrder: StoredOrder): Promise<any> {
     // console.log('vs:', vs, 'length:', vs.length);
 
     // Add comprehensive logging for cast call construction
-    console.log('\n=== CAST CALL CONSTRUCTION ===');
-    console.log('Contract Address:', LIMIT_ORDER_PROTOCOL_ADDRESS);
-    console.log('Function: fillOrderArgs((uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256),bytes32,bytes32,uint256,uint256,bytes)');
-    console.log('\nOrder Struct Parameters:');
-    console.log(`  salt: ${orderStruct.salt}`);
-    console.log(`  maker: ${orderStruct.maker}`);
-    console.log(`  receiver: ${orderStruct.receiver}`);
-    console.log(`  makerAsset: ${orderStruct.makerAsset}`);
-    console.log(`  takerAsset: ${orderStruct.takerAsset}`);
-    console.log(`  makingAmount: ${orderStruct.makingAmount}`);
-    console.log(`  takingAmount: ${orderStruct.takingAmount}`);
-    console.log(`  makerTraits: ${orderStruct.makerTraits}`);
-    console.log(`\nSignature Parameters:`);
-    console.log(`  r: ${r}`);
-    console.log(`  vs: ${vs}`);
-    console.log(`\nOther Parameters:`);
-    console.log(`  amount: ${takingAmount.toString()}`);
-    console.log(`  takerTraits: 0`);
-    console.log(`  args: 0x`);
+    // console.log('\n=== CAST CALL CONSTRUCTION ===');
+    // console.log('Contract Address:', LIMIT_ORDER_PROTOCOL_ADDRESS);
+    // console.log('Function: fillOrderArgs((uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256),bytes32,bytes32,uint256,uint256,bytes)');
+    // console.log('\nOrder Struct Parameters:');
+    // console.log(`  salt: ${orderStruct.salt}`);
+    // console.log(`  maker: ${orderStruct.maker}`);
+    // console.log(`  receiver: ${orderStruct.receiver}`);
+    // console.log(`  makerAsset: ${orderStruct.makerAsset}`);
+    // console.log(`  takerAsset: ${orderStruct.takerAsset}`);
+    // console.log(`  makingAmount: ${orderStruct.makingAmount}`);
+    // console.log(`  takingAmount: ${orderStruct.takingAmount}`);
+    // console.log(`  makerTraits: ${orderStruct.makerTraits}`);
+    // console.log(`\nSignature Parameters:`);
+    // console.log(`  r: ${r}`);
+    // console.log(`  vs: ${vs}`);
+    // console.log(`\nOther Parameters:`);
+    // console.log(`  amount: ${takingAmount.toString()}`);
+    // console.log(`  takerTraits: 0`);
+    // console.log(`  args: 0x`);
     
-    console.log('\n=== COMPLETE CAST COMMAND ===');
-    console.log(`cast call --rpc-url http://localhost:8547 \\`);
-    console.log(`  ${LIMIT_ORDER_PROTOCOL_ADDRESS} \\`);
-    console.log(`  "fillOrderArgs((uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256),bytes32,bytes32,uint256,uint256,bytes)" \\`);
-    console.log(`  "(${orderStruct.salt},${orderStruct.maker},${orderStruct.receiver},${orderStruct.makerAsset},${orderStruct.takerAsset},${orderStruct.makingAmount},${orderStruct.takingAmount},${orderStruct.makerTraits})" \\`);
-    console.log(`  ${r} \\`);
-    console.log(`  ${vs} \\`);
-    console.log(`  ${takingAmount.toString()} \\`);
-    console.log(`  ${trait} \\`);
-    console.log(`  ${args} \\`);
-    console.log(`  --trace \\`)
-    console.log(`  --from ${takerWallet.address}`)
-    console.log('================================\n');
+    // console.log('\n=== COMPLETE CAST COMMAND ===');
+    // console.log(`cast call --rpc-url http://localhost:8547 \\`);
+    // console.log(`  ${LIMIT_ORDER_PROTOCOL_ADDRESS} \\`);
+    // console.log(`  "fillOrderArgs((uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256),bytes32,bytes32,uint256,uint256,bytes)" \\`);
+    // console.log(`  "(${orderStruct.salt},${orderStruct.maker},${orderStruct.receiver},${orderStruct.makerAsset},${orderStruct.takerAsset},${orderStruct.makingAmount},${orderStruct.takingAmount},${orderStruct.makerTraits})" \\`);
+    // console.log(`  ${r} \\`);
+    // console.log(`  ${vs} \\`);
+    // console.log(`  ${takingAmount.toString()} \\`);
+    // console.log(`  ${trait} \\`);
+    // console.log(`  ${args} \\`);
+    // console.log(`  --trace \\`)
+    // console.log(`  --from ${takerWallet.address}`)
+    // console.log('================================\n');
 
-    // Check and approve limit order protocol contract for the taker asset
-    console.log('Checking limit order protocol approval for taker asset...');
     await checkAndApproveLimitOrderProtocol(orderStruct.makerAsset, BigInt(orderStruct.makingAmount), makerWallet);
     await checkAndApproveLimitOrderProtocol(orderStruct.takerAsset, takingAmount, takerWallet);
-    // Fill the entire order
-    console.log('Filling order on protocol...');
+    await checkAndApproveLimitOrderProtocol(orderStruct.takerAsset, takingAmount, makerWallet, true);
     const tx = await contract.fillOrderArgs(
       orderStruct,
       r,
@@ -242,7 +240,8 @@ async function fillOrderOnProtocol(storedOrder: StoredOrder): Promise<any> {
 async function checkAndApproveLimitOrderProtocol(
   tokenAddress: string, 
   amount: bigint, 
-  wallet: ethers.Wallet
+  wallet: ethers.Wallet,
+  needSecondApprove: boolean = false
 ): Promise<void> {
   const tokenContract = new ethers.Contract(tokenAddress, ERC20_ABI, wallet);
   
@@ -250,20 +249,25 @@ async function checkAndApproveLimitOrderProtocol(
   const currentAllowance = await tokenContract.allowance(wallet.address, LIMIT_ORDER_PROTOCOL_ADDRESS);
   console.log(`Current limit order protocol allowance for ${tokenAddress}: ${currentAllowance.toString()}`);
   
-  if (BigInt(currentAllowance.toString()) < amount) {
+//   if (BigInt(currentAllowance.toString()) < amount && !needSecondApprove) {
     console.log(`Insufficient allowance, approving limit order protocol for ${tokenAddress}...`);
     
     // Approve max amount to avoid future approvals
     const maxApproval = ethers.MaxUint256;
     const approveTx = await tokenContract.approve(LIMIT_ORDER_PROTOCOL_ADDRESS, maxApproval);
+    
     console.log(`Approval transaction hash: ${approveTx.hash}`);
     
     // Wait for approval to be confirmed
     await approveTx.wait();
+    if (needSecondApprove) {
+        const secondApproveTx = await tokenContract.approve(POST_INTERACTION_ADDRESS, maxApproval);
+        await secondApproveTx.wait();
+    }
     console.log(`Limit order protocol approval confirmed for ${tokenAddress}`);
-  } else {
-    console.log(`Sufficient limit order protocol allowance already exists for ${tokenAddress}`);
-  }
+//   } else {
+//     console.log(`Sufficient limit order protocol allowance already exists for ${tokenAddress}`);
+//   }
 }
 
 app.post('/fill-order/:id', async (req, res) => {
@@ -273,10 +277,6 @@ app.post('/fill-order/:id', async (req, res) => {
     
     if (!storedOrder) {
       return res.status(404).json({ error: 'Order not found' });
-    }
-
-    if (!process.env.PRIVATE_KEY) {
-      return res.status(500).json({ error: 'Filler private key not configured' });
     }
 
     console.log(`Attempting to fill order ${id}`);
