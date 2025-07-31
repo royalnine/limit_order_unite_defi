@@ -58,68 +58,33 @@ declare global {
 export default function Page() {
     const [walletConnected, setWalletConnected] = useState(false);
     const [userAddress, setUserAddress] = useState('');
+    // Add these new state variables for account selection
+    const [availableAccounts, setAvailableAccounts] = useState<string[]>([]);
+    const [showAccountSelector, setShowAccountSelector] = useState(false);
     const [accountSummary, setAccountSummary] = useState<AaveAccountSummary | null>(null);
     const [tokenPositions, setTokenPositions] = useState<AaveTokenPosition[]>([]);
     const [supportedTokens, setSupportedTokens] = useState<AaveSupportedTokensResponse>();
     const [selectedPosition, setSelectedPosition] = useState<AaveTokenPosition | null>(null);
+    const [selectedSupplyPosition, setSelectedSupplyPosition] = useState<AaveTokenPosition | null>(null);
+    const [selectedBorrowPosition, setSelectedBorrowPosition] = useState<AaveTokenPosition | null>(null);
     const [isLoading, setIsLoading] = useState(false);
     const [limitPrice, setLimitPrice] = useState('');
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [isConnecting, setIsConnecting] = useState(false);
 
-    // Check for existing wallet connection on component mount
-    useEffect(() => {
-        const checkWalletConnection = async () => {
-            if (typeof window.ethereum !== 'undefined') {
-                try {
-                    const accounts = await window.ethereum.request({
-                        method: 'eth_accounts',
-                    });
-                    
-                    if (accounts.length > 0) {
-                        setUserAddress(accounts[0]);
-                        setWalletConnected(true);
-                        await loadAaveData();
-                    }
-                } catch (error) {
-                    console.error('Error checking wallet connection:', error);
-                }
-            }
-        };
+    // Helper functions to filter positions
+    const getSupplyPositions = () => {
+        return tokenPositions.filter(position => parseFloat(position.tokenBalance) > 0);
+    };
 
-        checkWalletConnection();
-
-        // Listen for account changes
-        if (typeof window.ethereum !== 'undefined') {
-            const handleAccountsChanged = (accounts: string[]) => {
-                if (accounts.length === 0) {
-                    // User disconnected their wallet
-                    setWalletConnected(false);
-                    setUserAddress('');
-                    setAccountSummary(null);
-                    setTokenPositions([]);
-                    setSupportedTokens(undefined);
-                } else {
-                    // User switched accounts
-                    setUserAddress(accounts[0]);
-                    loadAaveData();
-                }
-            };
-
-            window.ethereum.on('accountsChanged', handleAccountsChanged);
-
-            // Cleanup listener on component unmount
-            return () => {
-                if (window.ethereum?.removeListener) {
-                    window.ethereum.removeListener('accountsChanged', handleAccountsChanged);
-                }
-            };
-        }
-    }, []);
+    const getBorrowPositions = () => {
+        return tokenPositions.filter(position => 
+            parseFloat(position.variableDebt) > 0 || parseFloat(position.stableDebt) > 0
+        );
+    };
 
     // Load AAVE data using Compass API
-    const loadAaveData = async () => {
-        if (!userAddress) return;
+    const loadAaveData = async (userAddress: string) => {
         
         setIsLoading(true);
         
@@ -154,7 +119,7 @@ export default function Page() {
                         const positionResponse = await sdk.aaveV3.userPositionPerToken({
                             chain: 'base:mainnet',
                             user: userAddress,
-                            token: token.address as AaveUserPositionPerTokenToken,
+                            token: token.symbol as AaveUserPositionPerTokenToken,
                         });
                         
                         if (positionResponse) {
@@ -188,13 +153,8 @@ export default function Page() {
         }
     };
 
+    // Modified connect wallet function
     const connectWallet = async () => {
-        // Prevent multiple simultaneous connection attempts
-        if (isConnecting) {
-            console.log('Wallet connection already in progress...');
-            return;
-        }
-
         setIsConnecting(true);
         
         try {
@@ -217,19 +177,23 @@ export default function Page() {
             }
 
             if (accounts.length > 0) {
-                setUserAddress(accounts[0]);
-                setWalletConnected(true);
-                await loadAaveData();
-                console.log('Wallet connected:', accounts[0]);
+                console.log('Available accounts:', accounts);
+                setAvailableAccounts(accounts);
+                
+                // If only one account, connect automatically
+                if (accounts.length === 1) {
+                    await selectAccount(accounts[0]);
+                } else {
+                    // Multiple accounts - show selector
+                    setShowAccountSelector(true);
+                }
             }
         } catch (error: any) {
             console.error('Failed to connect wallet:', error);
             
             if (error.code === 4001) {
-                // User rejected the connection request
                 alert('Please connect your wallet to continue.');
             } else if (error.message && error.message.includes('already pending')) {
-                // Handle the specific case of pending requests
                 alert('A wallet connection request is already pending. Please check MetaMask and complete the request.');
             } else {
                 alert('Failed to connect wallet. Please try again.');
@@ -239,27 +203,39 @@ export default function Page() {
         }
     };
 
+    // New function to handle account selection
+    const selectAccount = async (account: string) => {
+        console.log('Selecting account:', account);
+        setUserAddress(account);
+        setWalletConnected(true);
+        setShowAccountSelector(false);
+        await loadAaveData(account);
+        console.log('Wallet connected:', account);
+    };
+
     const submitLimitOrder = async () => {
-        if (!selectedPosition || !limitPrice) return;
+        if (!selectedSupplyPosition || !selectedBorrowPosition || !limitPrice) return;
 
         setIsSubmitting(true);
 
         try {
-            // TODO: Implement limit order submission with 1inch protocol
-            console.log('Submitting limit order:', {
-                position: selectedPosition,
+            // TODO: Implement liquidation protection setup with 1inch protocol
+            console.log('Setting up liquidation protection:', {
+                supplyPosition: selectedSupplyPosition,
+                borrowPosition: selectedBorrowPosition,
                 limitPrice: limitPrice,
             });
 
             // Mock API call
             await new Promise((resolve) => setTimeout(resolve, 2000));
 
-            alert('Limit order submitted successfully!');
+            alert('Liquidation protection set up successfully!');
             setLimitPrice('');
-            setSelectedPosition(null);
+            setSelectedSupplyPosition(null);
+            setSelectedBorrowPosition(null);
         } catch (error) {
-            console.error('Error submitting limit order:', error);
-            alert('Failed to submit limit order');
+            console.error('Error setting up liquidation protection:', error);
+            alert('Failed to set up liquidation protection');
         } finally {
             setIsSubmitting(false);
         }
@@ -297,6 +273,37 @@ export default function Page() {
             </header>
 
             <main className="max-w-7xl mx-auto px-6 py-8">
+                {/* Account Selection Modal */}
+                {showAccountSelector && (
+                    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+                        <div className="bg-white p-6 rounded-lg shadow-xl max-w-md w-full mx-4">
+                            <h3 className="text-lg font-semibold mb-4">Select Account</h3>
+                            <p className="text-gray-600 mb-4">Choose which account you want to connect:</p>
+                            <div className="space-y-2">
+                                {availableAccounts.map((account, index) => (
+                                    <button
+                                        key={account}
+                                        onClick={() => selectAccount(account)}
+                                        className="w-full p-3 text-left border border-gray-200 rounded-lg hover:bg-blue-50 hover:border-blue-300 transition-colors"
+                                    >
+                                        <div className="font-medium">Account {index + 1}</div>
+                                        <div className="text-sm text-gray-500 font-mono">
+                                            {account.slice(0, 6)}...{account.slice(-4)}
+                                        </div>
+                                    </button>
+                                ))}
+                            </div>
+                            <button
+                                onClick={() => setShowAccountSelector(false)}
+                                className="mt-4 w-full p-2 text-gray-600 border border-gray-300 rounded-lg hover:bg-gray-50"
+                            >
+                                Cancel
+                            </button>
+                        </div>
+                    </div>
+                )}
+
+                {/* Wallet Connection Section */}
                 {!walletConnected ? (
                     <div className="text-center py-20">
                         <div className="w-16 h-16 bg-gradient-to-r from-purple-500 to-pink-500 rounded-full mx-auto mb-6 flex items-center justify-center">
@@ -399,31 +406,80 @@ export default function Page() {
                                         </div>
                                     )}
 
-                                    {/* Individual Token Positions */}
-                                    {tokenPositions.length === 0 ? (
-                                        <div className="text-center py-8">
-                                            <p className="text-gray-400">No active positions found</p>
-                                        </div>
-                                    ) : (
+                                    {/* Supply Positions */}
+                                    {getSupplyPositions().length > 0 && (
                                         <div className="space-y-4">
-                                            <h3 className="font-semibold text-lg">Individual Token Positions</h3>
-                                            {tokenPositions.map((position) => (
+                                            <h3 className="font-semibold text-lg flex items-center">
+                                                <svg className="w-5 h-5 mr-2 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 100 4m0-4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 100 4m0-4v2m0-6V4" />
+                                                </svg>
+                                                Supply Positions (Collateral)
+                                            </h3>
+                                            {getSupplyPositions().map((position) => (
                                                 <div
-                                                    key={position.address}
+                                                    key={`supply-${position.address}`}
                                                     className={`p-4 rounded-lg border cursor-pointer transition-all duration-200 ${
-                                                        selectedPosition?.address === position.address
-                                                            ? 'border-purple-500 bg-purple-500/10'
+                                                        selectedSupplyPosition?.address === position.address
+                                                            ? 'border-green-500 bg-green-500/10'
                                                             : 'border-gray-700 hover:border-gray-600 bg-gray-800/50'
                                                     }`}
-                                                    onClick={() => setSelectedPosition(position)}
+                                                    onClick={() => setSelectedSupplyPosition(position)}
                                                 >
                                                     <div className="flex justify-between items-start mb-3">
                                                         <div>
-                                                            <h4 className="font-semibold text-lg">
+                                                            <h4 className="font-semibold text-lg flex items-center">
                                                                 {position.symbol}
+                                                                <span className="ml-2 px-2 py-1 text-xs bg-green-500/20 text-green-400 rounded">
+                                                                    SUPPLY
+                                                                </span>
                                                             </h4>
                                                             <p className="text-sm text-gray-400">
-                                                                aToken Balance: {(parseFloat(position.tokenBalance) / Math.pow(10, 18)).toFixed(6)}
+                                                                Supplied: {(parseFloat(position.tokenBalance)).toFixed(6)} {position.symbol}
+                                                            </p>
+                                                        </div>
+                                                    </div>
+                                                    <div className="grid grid-cols-2 gap-4 text-sm">
+                                                        <div>
+                                                            <p className="text-gray-400">Liquidity Rate (APY)</p>
+                                                            <p className="font-medium text-green-400">
+                                                                {(parseFloat(position.liquidityRate) * 100).toFixed(2)}%
+                                                            </p>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+
+                                    {/* Borrow Positions */}
+                                    {getBorrowPositions().length > 0 && (
+                                        <div className="space-y-4">
+                                            <h3 className="font-semibold text-lg flex items-center">
+                                                <svg className="w-5 h-5 mr-2 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v3m0 0v3m0-3h3m-3 0H9m12 0a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                                </svg>
+                                                Borrow Positions (Debt)
+                                            </h3>
+                                            {getBorrowPositions().map((position) => (
+                                                <div
+                                                    key={`borrow-${position.address}`}
+                                                    className={`p-4 rounded-lg border cursor-pointer transition-all duration-200 ${
+                                                        selectedBorrowPosition?.address === position.address
+                                                            ? 'border-red-500 bg-red-500/10'
+                                                            : 'border-gray-700 hover:border-gray-600 bg-gray-800/50'
+                                                    }`}
+                                                    onClick={() => setSelectedBorrowPosition(position)}
+                                                >
+                                                    <div className="flex justify-between items-start mb-3">
+                                                        <div>
+                                                            <h4 className="font-semibold text-lg flex items-center">
+                                                                {position.symbol}
+                                                                <span className="ml-2 px-2 py-1 text-xs bg-red-500/20 text-red-400 rounded">
+                                                                    BORROW
+                                                                </span>
+                                                            </h4>
+                                                            <p className="text-sm text-gray-400">
+                                                                Total Debt: {((parseFloat(position.variableDebt) + parseFloat(position.stableDebt))).toFixed(6)} {position.symbol}
                                                             </p>
                                                         </div>
                                                     </div>
@@ -431,30 +487,32 @@ export default function Page() {
                                                         <div>
                                                             <p className="text-gray-400">Variable Debt</p>
                                                             <p className="font-medium">
-                                                                {(parseFloat(position.variableDebt) / Math.pow(10, 18)).toFixed(6)} {position.symbol}
+                                                                {(parseFloat(position.variableDebt)).toFixed(6)} {position.symbol}
                                                             </p>
                                                         </div>
                                                         <div>
-                                                            <p className="text-gray-400">Stable Debt</p>
-                                                            <p className="font-medium">
-                                                                {(parseFloat(position.stableDebt) / Math.pow(10, 18)).toFixed(6)} {position.symbol}
-                                                            </p>
-                                                        </div>
-                                                        <div>
-                                                            <p className="text-gray-400">Variable Rate</p>
-                                                            <p className="font-medium">
-                                                                {(parseFloat(position.variableBorrowRate) / 1e25 * 100).toFixed(2)}%
-                                                            </p>
-                                                        </div>
-                                                        <div>
-                                                            <p className="text-gray-400">Liquidity Rate</p>
-                                                            <p className="font-medium">
-                                                                {(parseFloat(position.liquidityRate) / 1e25 * 100).toFixed(2)}%
+                                                            <p className="text-gray-400">Variable Rate (APY)</p>
+                                                            <p className="font-medium text-red-400">
+                                                                {(parseFloat(position.variableBorrowRate) * 100).toFixed(2)}%
                                                             </p>
                                                         </div>
                                                     </div>
                                                 </div>
                                             ))}
+                                        </div>
+                                    )}
+
+                                    {/* No positions message */}
+                                    {tokenPositions.length === 0 && (
+                                        <div className="text-center py-8">
+                                            <p className="text-gray-400">No active positions found</p>
+                                        </div>
+                                    )}
+
+                                    {/* No supply/borrow positions message */}
+                                    {tokenPositions.length > 0 && getSupplyPositions().length === 0 && getBorrowPositions().length === 0 && (
+                                        <div className="text-center py-8">
+                                            <p className="text-gray-400">No supply or borrow positions found</p>
                                         </div>
                                     )}
                                 </div>
@@ -480,7 +538,7 @@ export default function Page() {
                                 Set Liquidation Protection
                             </h2>
 
-                            {!selectedPosition ? (
+                            {!selectedSupplyPosition || !selectedBorrowPosition ? (
                                 <div className="text-center py-12">
                                     <div className="w-12 h-12 bg-gray-700 rounded-full mx-auto mb-4 flex items-center justify-center">
                                         <svg
@@ -493,28 +551,109 @@ export default function Page() {
                                                 strokeLinecap="round"
                                                 strokeLinejoin="round"
                                                 strokeWidth={2}
-                                                d="M7 4V2a1 1 0 011-1h8a1 1 0 011 1v2m-9 0h10m-10 0a2 2 0 00-2 2v14a2 2 0 002 2h10a2 2 0 002-2V6a2 2 0 00-2-2"
+                                                d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"
                                             />
                                         </svg>
                                     </div>
-                                    <p className="text-gray-400">
-                                        Select a position to set up protection
-                                    </p>
+                                    <h3 className="text-lg font-semibold mb-3 text-gray-200">
+                                        Select Positions for Protection
+                                    </h3>
+                                    <div className="space-y-3">
+                                        <p className="text-gray-400 text-sm max-w-md mx-auto">
+                                            To set up liquidation protection, you need to select both:
+                                        </p>
+                                        <div className="flex flex-col space-y-2 max-w-sm mx-auto">
+                                            <div className={`flex items-center justify-between p-3 rounded-lg border ${
+                                                selectedSupplyPosition 
+                                                    ? 'border-green-500 bg-green-500/10' 
+                                                    : 'border-gray-600 bg-gray-800/30'
+                                            }`}>
+                                                <div className="flex items-center">
+                                                    <svg className="w-4 h-4 mr-2 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 100 4m0-4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 100 4m0-4v2m0-6V4" />
+                                                    </svg>
+                                                    <span className="text-sm">1 Supply Position</span>
+                                                </div>
+                                                {selectedSupplyPosition ? (
+                                                    <svg className="w-4 h-4 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                                                    </svg>
+                                                ) : (
+                                                    <div className="w-4 h-4 border border-gray-500 rounded"></div>
+                                                )}
+                                            </div>
+                                            <div className={`flex items-center justify-between p-3 rounded-lg border ${
+                                                selectedBorrowPosition 
+                                                    ? 'border-red-500 bg-red-500/10' 
+                                                    : 'border-gray-600 bg-gray-800/30'
+                                            }`}>
+                                                <div className="flex items-center">
+                                                    <svg className="w-4 h-4 mr-2 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v3m0 0v3m0-3h3m-3 0H9m12 0a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                                    </svg>
+                                                    <span className="text-sm">1 Borrow Position</span>
+                                                </div>
+                                                {selectedBorrowPosition ? (
+                                                    <svg className="w-4 h-4 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                                                    </svg>
+                                                ) : (
+                                                    <div className="w-4 h-4 border border-gray-500 rounded"></div>
+                                                )}
+                                            </div>
+                                        </div>
+                                        <p className="text-gray-500 text-xs mt-4">
+                                            The protection strategy will monitor both positions and trigger automatic actions when liquidation risk increases.
+                                        </p>
+                                    </div>
                                 </div>
                             ) : (
                                 <div className="space-y-6">
-                                    <div className="p-4 bg-gray-800/50 rounded-lg">
-                                        <h3 className="font-semibold mb-2">Selected Position</h3>
+                                    <div className="grid grid-cols-1 gap-4">
+                                        {/* Selected Supply Position */}
+                                        <div className="p-4 bg-green-500/10 border border-green-500/30 rounded-lg">
+                                            <div className="flex justify-between items-start mb-2">
+                                                <h3 className="font-semibold text-green-400 flex items-center">
+                                                    <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 100 4m0-4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 100 4m0-4v2m0-6V4" />
+                                                    </svg>
+                                                    Supply Position: {selectedSupplyPosition.symbol}
+                                                </h3>
+                                                <button
+                                                    onClick={() => setSelectedSupplyPosition(null)}
+                                                    className="text-gray-400 hover:text-white transition-colors"
+                                                >
+                                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                                                    </svg>
+                                                </button>
+                                            </div>
+                                            <div className="text-sm text-gray-300">
+                                                <p>Supplied: {parseFloat(selectedSupplyPosition.tokenBalance).toFixed(6)} {selectedSupplyPosition.symbol}</p>
+                                            </div>
+                                        </div>
+
+                                        {/* Selected Borrow Position */}
+                                        <div className="p-4 bg-red-500/10 border border-red-500/30 rounded-lg">
+                                            <div className="flex justify-between items-start mb-2">
+                                                <h3 className="font-semibold text-red-400 flex items-center">
+                                                    <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v3m0 0v3m0-3h3m-3 0H9m12 0a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                                    </svg>
+                                                    Borrow Position: {selectedBorrowPosition.symbol}
+                                                </h3>
+                                                <button
+                                                    onClick={() => setSelectedBorrowPosition(null)}
+                                                    className="text-gray-400 hover:text-white transition-colors"
+                                                >
+                                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                                                    </svg>
+                                                </button>
+                                                </div>
                                         <div className="text-sm text-gray-300">
-                                            <p>
-                                                aToken Balance: {(parseFloat(selectedPosition.tokenBalance) / Math.pow(10, 18)).toFixed(6)} {selectedPosition.symbol}
-                                            </p>
-                                            <p>
-                                                Variable Debt: {(parseFloat(selectedPosition.variableDebt) / Math.pow(10, 18)).toFixed(6)} {selectedPosition.symbol}
-                                            </p>
-                                            <p>
-                                                Stable Debt: {(parseFloat(selectedPosition.stableDebt) / Math.pow(10, 18)).toFixed(6)} {selectedPosition.symbol}
-                                            </p>
+                                                <p>Total Debt: {(parseFloat(selectedBorrowPosition.variableDebt) + parseFloat(selectedBorrowPosition.stableDebt)).toFixed(6)} {selectedBorrowPosition.symbol}</p>
+                                            </div>
                                         </div>
                                     </div>
 
@@ -537,20 +676,19 @@ export default function Page() {
                                             </div>
                                         </div>
                                         <p className="text-xs text-gray-400 mt-2">
-                                            Order will execute when {selectedPosition.symbol} price
-                                            reaches this level
+                                            Order will execute when {selectedSupplyPosition.symbol} price reaches this level
                                         </p>
                                     </div>
 
                                     <div className="p-4 bg-blue-500/10 border border-blue-500/30 rounded-lg">
                                         <h4 className="font-medium text-blue-400 mb-2">
-                                            How it works:
+                                            Protection Strategy:
                                         </h4>
                                         <ul className="text-sm text-gray-300 space-y-1">
-                                            <li>• Limit order triggers at your specified price</li>
-                                            <li>• 1inch protocol executes the swap</li>
-                                            <li>• Proceeds automatically supply to AAVE</li>
-                                            <li>• Your position gets protected from liquidation</li>
+                                            <li>• Monitor health factor of selected positions</li>
+                                            <li>• When threshold is reached, convert {selectedSupplyPosition.symbol} collateral to {selectedBorrowPosition.symbol}</li>
+                                            <li>• Use 1inch protocol for optimal swap execution</li>
+                                            <li>• Automatically repay debt to restore healthy position</li>
                                         </ul>
                                     </div>
 
@@ -562,10 +700,10 @@ export default function Page() {
                                         {isSubmitting ? (
                                             <div className="flex items-center justify-center">
                                                 <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
-                                                Submitting Order...
+                                                Setting up Protection...
                                             </div>
                                         ) : (
-                                            'Submit Limit Order'
+                                            'Set Up Liquidation Protection'
                                         )}
                                     </button>
                                 </div>

@@ -178,25 +178,6 @@ async function fillOrderOnProtocol(storedOrder: StoredOrder): Promise<any> {
     // console.log('vs:', vs, 'length:', vs.length);
 
     // Add comprehensive logging for cast call construction
-    // console.log('\n=== CAST CALL CONSTRUCTION ===');
-    // console.log('Contract Address:', LIMIT_ORDER_PROTOCOL_ADDRESS);
-    // console.log('Function: fillOrderArgs((uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256),bytes32,bytes32,uint256,uint256,bytes)');
-    // console.log('\nOrder Struct Parameters:');
-    // console.log(`  salt: ${orderStruct.salt}`);
-    // console.log(`  maker: ${orderStruct.maker}`);
-    // console.log(`  receiver: ${orderStruct.receiver}`);
-    // console.log(`  makerAsset: ${orderStruct.makerAsset}`);
-    // console.log(`  takerAsset: ${orderStruct.takerAsset}`);
-    // console.log(`  makingAmount: ${orderStruct.makingAmount}`);
-    // console.log(`  takingAmount: ${orderStruct.takingAmount}`);
-    // console.log(`  makerTraits: ${orderStruct.makerTraits}`);
-    // console.log(`\nSignature Parameters:`);
-    // console.log(`  r: ${r}`);
-    // console.log(`  vs: ${vs}`);
-    // console.log(`\nOther Parameters:`);
-    // console.log(`  amount: ${takingAmount.toString()}`);
-    // console.log(`  takerTraits: 0`);
-    // console.log(`  args: 0x`);
     
     // console.log('\n=== COMPLETE CAST COMMAND ===');
     // console.log(`cast call --rpc-url http://localhost:8547 \\`);
