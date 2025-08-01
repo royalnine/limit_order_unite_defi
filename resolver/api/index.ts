@@ -43,7 +43,6 @@ interface StoredOrder {
 }
 
 const LIMIT_ORDER_PROTOCOL_ADDRESS = '0x111111125421cA6dc452d289314280a0f8842A65';
-const MAKER_PRIVATE_KEY = process.env.MAKER_PRIVATE_KEY;
 const TAKER_PRIVATE_KEY = process.env.TAKER_PRIVATE_KEY;
 const POST_INTERACTION_ADDRESS = '0x8815Ab44465734eF2C41de36cff0ab130e1ab32B';
 const ONEINCH_API_KEY = process.env.ONEINCH_API_KEY;
@@ -60,7 +59,6 @@ const orderStorage = new Map<string, StoredOrder>();
 
 // Setup RPC provider
 const provider = new ethers.JsonRpcProvider(process.env.BASE_RPC_URL as string);
-const makerWallet = new ethers.Wallet(MAKER_PRIVATE_KEY!, provider);
 const takerWallet = new ethers.Wallet(TAKER_PRIVATE_KEY!, provider);
 
 
