@@ -28,6 +28,8 @@ interface SubmitOrderRequest {
   order: LimitOrderV4Struct;
   signature: string;
   extension: string;
+  limitPriceUsd: number;
+  isLong: boolean;
 }
 
 interface StoredOrder {
@@ -36,12 +38,15 @@ interface StoredOrder {
   signature: string;
   timestamp: number;
   reconstructedOrder?: LimitOrder;
+  limitPriceUsd: number;
+  isLong: boolean;
 }
 
 const LIMIT_ORDER_PROTOCOL_ADDRESS = '0x111111125421cA6dc452d289314280a0f8842A65';
 const MAKER_PRIVATE_KEY = process.env.MAKER_PRIVATE_KEY;
 const TAKER_PRIVATE_KEY = process.env.TAKER_PRIVATE_KEY;
-const POST_INTERACTION_ADDRESS = '0xB5A296FAc05Fa8B5e8707E5E525b8C51aa6137F1';
+const POST_INTERACTION_ADDRESS = '0xb2E45c82dA1520EF63DbeBdEde6F26a635C54B61';
+const ONEINCH_API_KEY = process.env.ONEINCH_API_KEY;
 
 const ERC20_ABI = [
   'function allowance(address owner, address spender) view returns (uint256)',
@@ -83,9 +88,84 @@ function generateOrderId(order: LimitOrderV4Struct): string {
   return createHash('sha256').update(orderString).digest('hex');
 }
 
+function serializeOrderForJSON(order: StoredOrder): any {
+  return {
+    id: order.id,
+    order: order.order,
+    signature: order.signature,
+    timestamp: order.timestamp,
+    limitPriceUsd: order.limitPriceUsd,
+    isLong: order.isLong,
+    // Convert reconstructedOrder to serializable format if it exists
+    reconstructedOrder: order.reconstructedOrder ? {
+      orderStruct: order.reconstructedOrder.build(),
+      extension: order.reconstructedOrder.extension.encode(),
+      salt: order.reconstructedOrder.salt.toString(),
+      maker: order.reconstructedOrder.maker.toString(),
+      receiver: order.reconstructedOrder.receiver.toString(),
+      makerAsset: order.reconstructedOrder.makerAsset.toString(),
+      takerAsset: order.reconstructedOrder.takerAsset.toString(),
+      makingAmount: order.reconstructedOrder.makingAmount.toString(),
+      takingAmount: order.reconstructedOrder.takingAmount.toString(),
+      makerTraits: order.reconstructedOrder.makerTraits.toString()
+    } : undefined
+  };
+}
+
+async function getSpotPrices(makerTokenAddress: string, takerTokenAddress: string): Promise<{ makerTokenPrice: number, takerTokenPrice: number }> {
+  const priceEndpointBaseURL = `https://api.1inch.dev/price/v1.1/8453/${makerTokenAddress},${takerTokenAddress}`
+
+  const response = await fetch(`${priceEndpointBaseURL}?currency=USD`, {
+    headers: {
+      'Authorization': `Bearer ${ONEINCH_API_KEY}`
+    }
+  });
+  const data = await response.json();
+  const makerTokenPrice = data[makerTokenAddress];
+  const takerTokenPrice = data[takerTokenAddress];
+  return { makerTokenPrice, takerTokenPrice };
+}
+
+async function getFillableOrders(): Promise<StoredOrder[]> {
+  const fillableOrders: StoredOrder[] = [];
+  
+  // Use for...of instead of forEach for async operations
+  for (const order of orderStorage.values()) {
+    try {
+      const { makerTokenPrice, takerTokenPrice } = await getSpotPrices(order.order.makerAsset, order.order.takerAsset);
+      const priceRatio = takerTokenPrice / makerTokenPrice;
+      
+      console.log(`Order ${order.id}: limitPriceUsd=${order.limitPriceUsd}, priceRatio=${priceRatio}, isLong=${order.isLong}`);
+      
+      if (order.isLong) {
+        if (order.limitPriceUsd > priceRatio) {
+          fillableOrders.push(order);
+          console.log(`Order ${order.id} is fillable (long)`);
+        }
+      } else {
+        if (order.limitPriceUsd < priceRatio) {
+          fillableOrders.push(order);
+          console.log(`Order ${order.id} is fillable (short)`);
+        }
+      }
+    } catch (error) {
+      console.error(`Error processing order ${order.id}:`, error);
+    }
+  }
+  
+  console.log('fillableOrders', fillableOrders);
+  return fillableOrders;
+}
+
+app.get('/fillable-orders', async (req, res) => {
+  const fillableOrders = await getFillableOrders();
+  const serializedOrders = fillableOrders.map(serializeOrderForJSON);
+  res.json(serializedOrders);
+});
+
 app.post('/submit-order', (req, res) => {
   try {
-    const { order, signature, extension }: SubmitOrderRequest = req.body;
+    const { order, signature, extension, limitPriceUsd, isLong }: SubmitOrderRequest = req.body;
     
     if (!order || !signature) {
       return res.status(400).json({ error: 'Missing order or signature' });
@@ -105,7 +185,9 @@ app.post('/submit-order', (req, res) => {
       order,
       signature,
       timestamp: Date.now(),
-      reconstructedOrder
+      reconstructedOrder,
+      limitPriceUsd,
+      isLong
     };
 
     orderStorage.set(orderId, storedOrder);
@@ -214,7 +296,7 @@ async function fillOrderOnProtocol(storedOrder: StoredOrder): Promise<any> {
     );
 
     const receipt = await tx.wait();
-    
+    orderStorage.delete(storedOrder.id);
     return {
       transactionHash: receipt.hash,
       blockNumber: receipt.blockNumber,
@@ -238,10 +320,8 @@ async function checkAndApproveLimitOrderProtocol(
   const currentAllowance = await tokenContract.allowance(wallet.address, LIMIT_ORDER_PROTOCOL_ADDRESS);
   console.log(`Current limit order protocol allowance for ${tokenAddress}: ${currentAllowance.toString()}`);
   
-//   if (BigInt(currentAllowance.toString()) < amount && !needSecondApprove) {
     console.log(`Insufficient allowance, approving limit order protocol for ${tokenAddress}...`);
     
-    // Approve max amount to avoid future approvals
     const maxApproval = ethers.MaxUint256;
     const approveTx = await tokenContract.approve(LIMIT_ORDER_PROTOCOL_ADDRESS, maxApproval);
     
@@ -254,9 +334,6 @@ async function checkAndApproveLimitOrderProtocol(
         await secondApproveTx.wait();
     }
     console.log(`Limit order protocol approval confirmed for ${tokenAddress}`);
-//   } else {
-//     console.log(`Sufficient limit order protocol allowance already exists for ${tokenAddress}`);
-//   }
 }
 
 app.post('/fill-order/:id', async (req, res) => {

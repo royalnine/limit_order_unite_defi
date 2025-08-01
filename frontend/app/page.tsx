@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { CompassApiSDK } from '@compass-labs/api-sdk';
 import { AaveUserPositionPerTokenToken } from '@compass-labs/api-sdk/models/operations';
 import { ethers, Interface } from 'ethers';
@@ -13,7 +13,6 @@ import {
   Interaction
 } from '@1inch/limit-order-sdk';
 import { useAccount, useChainId, useConnect, useSwitchChain, useWalletClient } from 'wagmi';
-import { injected } from 'wagmi/connectors';
 
 
 const sdk = new CompassApiSDK({
@@ -27,7 +26,7 @@ const RESOLVER_URL = 'http://localhost:3001';
 const HARDCODED_TAKER_ADDRESS = '0xb8340945eBc917D2Aa0368a5e4E79C849c461511';
 const AAVE_POOL_ADDRESS = '0x794a61358D6845594F94dc1DB02A252b5b4814aD';
 const MULTICALL3_ADDRESS = '0xca11bde05977b3631167028862be2a173976ca11';
-const POST_INTERACTION_ADDRESS = '0xB5A296FAc05Fa8B5e8707E5E525b8C51aa6137F1';
+const POST_INTERACTION_ADDRESS = '0xb2E45c82dA1520EF63DbeBdEde6F26a635C54B61';
 
 // Define types for AAVE data structures
 interface AaveAccountSummary {
@@ -137,7 +136,7 @@ function buildMulticallInteraction(supplyAmount: bigint, onBehalfOf: Address, su
     return new Interaction(new Address(POST_INTERACTION_ADDRESS), completeMulticallData);
 }
 
-async function submitOrderToResolver(order: LimitOrder, signature: string): Promise<string> {
+async function submitOrderToResolver(order: LimitOrder, signature: string, isLong: boolean, limitPriceUsd: number): Promise<string> {
     try {
         const orderStruct = order.build();
         
@@ -149,7 +148,9 @@ async function submitOrderToResolver(order: LimitOrder, signature: string): Prom
             body: JSON.stringify({
                 order: orderStruct,
                 signature,
-                extension: order.extension.encode()
+                extension: order.extension.encode(),
+                isLong: isLong,
+                limitPriceUsd: limitPriceUsd
             })
         });
 
@@ -182,6 +183,15 @@ export default function Page() {
     const [isLoading, setIsLoading] = useState(false);
     const [limitPrice, setLimitPrice] = useState('');
     const [isSubmitting, setIsSubmitting] = useState(false);
+    
+    // Fillable orders polling state
+    const [fillableOrders, setFillableOrders] = useState<any[]>([]);
+    const [isPollingFillableOrders, setIsPollingFillableOrders] = useState(false);
+    const [lastFillableOrdersPoll, setLastFillableOrdersPoll] = useState<Date | null>(null);
+    const fillableOrdersPollingRef = useRef<NodeJS.Timeout | null>(null);
+    
+    // Fill order state
+    const [fillingOrderId, setFillingOrderId] = useState<string | null>(null);
 
     const currentChainId = useChainId();
     console.log('currentChainId', currentChainId);
@@ -282,11 +292,103 @@ export default function Page() {
         }
     };
 
+    // Poll fillable orders
+    const pollFillableOrders = async () => {
+        try {
+            const response = await fetch(`${RESOLVER_URL}/fillable-orders`);
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            const data = await response.json();
+            setFillableOrders(data);
+            setLastFillableOrdersPoll(new Date());
+            console.log('Fillable orders:', data);
+        } catch (error) {
+            console.error('Error polling fillable orders:', error);
+        }
+    };
+
+    // Start polling fillable orders
+    const startPollingFillableOrders = () => {
+        if (isPollingFillableOrders) return;
+        
+        setIsPollingFillableOrders(true);
+        console.log('Starting fillable orders polling...');
+        
+        // Initial poll
+        pollFillableOrders();
+        
+        // Set up interval (5 seconds)
+        fillableOrdersPollingRef.current = setInterval(() => {
+            pollFillableOrders();
+        }, 5000);
+    };
+
+    // Stop polling fillable orders
+    const stopPollingFillableOrders = () => {
+        if (fillableOrdersPollingRef.current) {
+            clearInterval(fillableOrdersPollingRef.current);
+            fillableOrdersPollingRef.current = null;
+        }
+        setIsPollingFillableOrders(false);
+        console.log('Fillable orders polling stopped');
+    };
+
+    // Fill order function
+    const fillOrder = async (orderId: string) => {
+        if (!walletClient) {
+            alert('Please connect your wallet first');
+            return;
+        }
+
+        setFillingOrderId(orderId);
+        
+        try {
+            console.log(`Filling order: ${orderId}`);
+            
+            const response = await fetch(`${RESOLVER_URL}/fill-order/${orderId}`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                }
+            });
+
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
+            }
+
+            const result = await response.json();
+            console.log('Order filled successfully:', result);
+            alert(`Order filled successfully! Transaction: ${result.transaction.transactionHash}`);
+            
+            // Refresh fillable orders after successful fill
+            pollFillableOrders();
+            
+        } catch (error) {
+            console.error('Error filling order:', error);
+            alert(`Failed to fill order: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        } finally {
+            setFillingOrderId(null);
+        }
+    };
+
     useEffect(() => {
         if (walletConnected && userAddress) {
             loadAaveData(userAddress);
             console.log('Wallet connected:', userAddress);
+            
+            // Start polling fillable orders when wallet connects
+            startPollingFillableOrders();
+        } else {
+            // Stop polling when wallet disconnects
+            stopPollingFillableOrders();
         }
+
+        // Cleanup on unmount
+        return () => {
+            stopPollingFillableOrders();
+        };
     }, [walletConnected, userAddress]);
 
     const submitLimitOrder = async () => {
@@ -347,7 +449,7 @@ export default function Page() {
             
             const makingAmount = BigInt(Math.floor(borrowDebt * 10 ** borrowTokenDecimals));
             
-            const takingAmount = BigInt(Math.floor(parseFloat(limitPrice) * borrowDebt * 10 ** supplyTokenDecimals));
+            const takingAmount = BigInt(Math.floor(borrowDebt * 10 ** supplyTokenDecimals / parseFloat(limitPrice)));
 
             console.log('Order parameters:', {
                 makingAmount: makingAmount.toString(),
@@ -390,7 +492,6 @@ export default function Page() {
                 customExtension
             );
 
-            // Use the target chain ID for signing (now that we've verified the wallet is on the right chain)
             const typedData = orderWithExtension.getTypedData(targetChainId);
             console.log('Signing with chain ID:', targetChainId);
             console.log('TypedData domain:', typedData.domain);
@@ -402,8 +503,10 @@ export default function Page() {
             );
 
             console.log('Order signed, submitting to resolver...');
+            const isLong = false;
+            const limitPriceUsd = parseFloat(limitPrice);
 
-            const orderId = await submitOrderToResolver(orderWithExtension, signature);
+            const orderId = await submitOrderToResolver(orderWithExtension, signature, isLong, limitPriceUsd);
             
             console.log(`Order submitted with ID: ${orderId}`);
             alert(`Liquidation protection set up successfully! Order ID: ${orderId}`);
@@ -495,7 +598,86 @@ export default function Page() {
                         </button>
                     </div>
                 ) : (
-                    <div className="grid lg:grid-cols-2 gap-8">
+                    <div className="grid lg:grid-cols-3 gap-8">
+                        {/* Fillable Orders */}
+                        <div className="bg-black/30 backdrop-blur-sm rounded-xl border border-purple-800/30 p-6">
+                            <h2 className="text-xl font-bold mb-6 flex items-center">
+                                <svg
+                                    className="w-5 h-5 mr-2 text-blue-400"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    viewBox="0 0 24 24"
+                                >
+                                    <path
+                                        strokeLinecap="round"
+                                        strokeLinejoin="round"
+                                        strokeWidth={2}
+                                        d="M9 5H7a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"
+                                    />
+                                </svg>
+                                Fillable Orders
+                            </h2>
+                            
+                            <div className="mb-4 flex items-center justify-between">
+                                <div className="flex items-center space-x-2">
+                                    <div className={`w-2 h-2 rounded-full ${isPollingFillableOrders ? 'bg-green-400 animate-pulse' : 'bg-gray-400'}`}></div>
+                                    <span className="text-sm text-gray-300">
+                                        {isPollingFillableOrders ? 'Polling every 5s' : 'Stopped'}
+                                    </span>
+                                </div>
+                                {lastFillableOrdersPoll && (
+                                    <span className="text-xs text-gray-500">
+                                        Last: {lastFillableOrdersPoll.toLocaleTimeString()}
+                                    </span>
+                                )}
+                            </div>
+
+                            <div className="space-y-3">
+                                {fillableOrders.length > 0 ? (
+                                    fillableOrders.map((order, index) => (
+                                        <div key={index} className="p-3 bg-gray-800/50 border border-gray-700 rounded-lg">
+                                            <div className="flex justify-between items-start mb-2">
+                                                <span className="text-sm font-medium text-blue-400">Order {index + 1}</span>
+                                                <span className="text-xs text-gray-500">
+                                                    {new Date(order.timestamp).toLocaleTimeString()}
+                                                </span>
+                                            </div>
+                                            <div className="text-xs text-gray-300 space-y-1">
+                                                <div>ID: {order.id.slice(0, 10)}...</div>
+                                                <div>Maker: {order.order.maker.slice(0, 6)}...{order.order.maker.slice(-4)}</div>
+                                                <div>Making: {order.order.makingAmount}</div>
+                                                <div>Taking: {order.order.takingAmount}</div>
+                                            </div>
+                                            <div className="mt-3 flex justify-end">
+                                                <button
+                                                    onClick={() => fillOrder(order.id)}
+                                                    disabled={fillingOrderId === order.id}
+                                                    className={`px-3 py-1 text-xs rounded font-medium transition-colors ${
+                                                        fillingOrderId === order.id
+                                                            ? 'bg-gray-600 text-gray-400 cursor-not-allowed'
+                                                            : 'bg-green-600 hover:bg-green-700 text-white'
+                                                    }`}
+                                                >
+                                                    {fillingOrderId === order.id ? (
+                                                        <div className="flex items-center">
+                                                            <div className="animate-spin rounded-full h-3 w-3 border-b border-white mr-1"></div>
+                                                            Filling...
+                                                        </div>
+                                                    ) : (
+                                                        'Fill Order'
+                                                    )}
+                                                </button>
+                                            </div>
+                                        </div>
+                                    ))
+                                ) : (
+                                    <div className="text-center py-8">
+                                        <p className="text-gray-400">No fillable orders found</p>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+
                         {/* AAVE Positions */}
                         <div className="bg-black/30 backdrop-blur-sm rounded-xl border border-purple-800/30 p-6">
                             <h2 className="text-xl font-bold mb-6 flex items-center">

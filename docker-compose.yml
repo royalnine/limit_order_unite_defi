@@ -1,8 +1,8 @@
 services:
 
-  arbitrum-fork:
+  base-fork:
     image: ghcr.io/foundry-rs/foundry:stable
-    container_name: arbitrum-fork
+    container_name: base-fork
     platform: linux/amd64
     entrypoint: ["anvil"]
     command:
