@@ -167,7 +167,7 @@ async function submitOrderToResolver(order: LimitOrder, signature: string, isLon
 }
 
 export default function Page() {
-    const targetChainId = 31337;
+    const targetChainId = 8453;
     const { address: userAddress, isConnected: walletConnected } = useAccount();
     const { connect, connectors, isPending: isConnecting } = useConnect();
     const { data: walletClient } = useWalletClient({ chainId: targetChainId });
