@@ -316,23 +316,27 @@ async function checkAndApproveLimitOrderProtocol(
   const tokenContract = new ethers.Contract(tokenAddress, ERC20_ABI, wallet);
   
   // Check current allowance for the limit order protocol contract
-//   const currentAllowance = await tokenContract.allowance(wallet.address, LIMIT_ORDER_PROTOCOL_ADDRESS);
-//   console.log(`Current limit order protocol allowance for ${tokenAddress}: ${currentAllowance.toString()}`);
-  
-//     console.log(`Insufficient allowance, approving limit order protocol for ${tokenAddress}...`);
-    
-    const maxApproval = ethers.MaxUint256;
+  const currentAllowance = await tokenContract.allowance(wallet.address, LIMIT_ORDER_PROTOCOL_ADDRESS);
+  console.log(`Current limit order protocol allowance for ${tokenAddress}: ${currentAllowance.toString()}`);
+  const maxApproval = ethers.MaxUint256;
+  console.log(`Insufficient allowance, approving limit order protocol for ${tokenAddress}...`);
+  if (amount > currentAllowance) {
     const approveTx = await tokenContract.approve(LIMIT_ORDER_PROTOCOL_ADDRESS, maxApproval);
-    
     console.log(`Approval transaction hash: ${approveTx.hash}`);
-    
-    // Wait for approval to be confirmed
-    await approveTx.wait();
-    if (needSecondApprove) {
+    const receipt = await approveTx.wait();
+    console.log(`Approval confirmed in block ${receipt.blockNumber}`);
+  }
+  if (needSecondApprove) {
+    const currentAllowance = await tokenContract.allowance(wallet.address, POST_INTERACTION_ADDRESS);
+    console.log(`Current limit order protocol allowance for ${tokenAddress}: ${currentAllowance.toString()}`);
+    if (amount > currentAllowance) {
         const secondApproveTx = await tokenContract.approve(POST_INTERACTION_ADDRESS, maxApproval);
-        await secondApproveTx.wait();
+        console.log(`Second approval transaction hash: ${secondApproveTx.hash}`);
+        const receipt = await secondApproveTx.wait();
+        console.log(`Second approval confirmed in block ${receipt.blockNumber}`);
     }
-    // console.log(`Limit order protocol approval confirmed for ${tokenAddress}`);
+  }
+  console.log(`Limit order protocol approval confirmed for ${tokenAddress}`);
 }
 
 app.post('/fill-order/:id', async (req, res) => {
