@@ -25,6 +25,16 @@ const RESOLVER_URL = process.env.NEXT_PUBLIC_RESOLVER_URL;
 const AAVE_POOL_ADDRESS = '0xA238Dd80C259a72e81d7e4664a9801593F98d1c5';
 const MULTICALL3_ADDRESS = '0xca11bde05977b3631167028862be2a173976ca11';
 const POST_INTERACTION_ADDRESS = '0x8815Ab44465734eF2C41de36cff0ab130e1ab32B';
+const LIMIT_ORDER_PROTOCOL_ADDRESS = '0x111111125421cA6dc452d289314280a0f8842A65';
+
+// ERC20 ABI for allowance and approval calls
+const ERC20_ABI = [
+  'function allowance(address owner, address spender) view returns (uint256)',
+  'function approve(address spender, uint256 amount) returns (bool)',
+  'function balanceOf(address account) view returns (uint256)',
+  'function decimals() view returns (uint8)',
+  'function symbol() view returns (string)'
+];
 
 // Define types for AAVE data structures
 interface AaveAccountSummary { 
@@ -132,6 +142,43 @@ function buildMulticallInteraction(supplyAmount: bigint, onBehalfOf: Address, su
     const completeMulticallData = encodeCompleteMulticall(multicallData);
 
     return new Interaction(new Address(POST_INTERACTION_ADDRESS), completeMulticallData);
+}
+
+// Allowance checking and approval functions
+async function checkAndApproveLimitOrderProtocol(
+  tokenAddress: string, 
+  amount: bigint, 
+  signer: ethers.Signer,
+  needSecondApprove: boolean = false
+): Promise<void> {
+  const tokenContract = new ethers.Contract(tokenAddress, ERC20_ABI, signer);
+  const userAddress = await signer.getAddress();
+  
+  // Check current allowance for the limit order protocol contract
+  const currentAllowance = await tokenContract.allowance(userAddress, LIMIT_ORDER_PROTOCOL_ADDRESS);
+  console.log(`Current limit order protocol allowance for ${tokenAddress}: ${currentAllowance.toString()}`);
+  
+  if (amount > currentAllowance) {
+    const maxApproval = ethers.MaxUint256;
+    console.log(`Insufficient allowance, approving limit order protocol for ${tokenAddress}...`);
+    const approveTx = await tokenContract.approve(LIMIT_ORDER_PROTOCOL_ADDRESS, maxApproval);
+    console.log(`Approval transaction hash: ${approveTx.hash}`);
+    const receipt = await approveTx.wait();
+    console.log(`Approval confirmed in block ${receipt.blockNumber}`);
+  }
+  
+  if (needSecondApprove) {
+    const currentAllowancePost = await tokenContract.allowance(userAddress, POST_INTERACTION_ADDRESS);
+    console.log(`Current post interaction allowance for ${tokenAddress}: ${currentAllowancePost.toString()}`);
+    if (amount > currentAllowancePost) {
+      const maxApproval = ethers.MaxUint256;
+      const secondApproveTx = await tokenContract.approve(POST_INTERACTION_ADDRESS, maxApproval);
+      console.log(`Second approval transaction hash: ${secondApproveTx.hash}`);
+      const receipt = await secondApproveTx.wait();
+      console.log(`Second approval confirmed in block ${receipt.blockNumber}`);
+    }
+  }
+  console.log(`Limit order protocol approval confirmed for ${tokenAddress}`);
 }
 
 async function submitOrderToResolver(order: LimitOrder, signature: string, isLong: boolean, limitPriceUsd: number): Promise<string> {
@@ -398,44 +445,7 @@ export default function Page() {
                 throw new Error('Wallet not connected');
             }
 
-            // Create provider and get the ACTUAL chain ID from the wallet
             const provider = new ethers.BrowserProvider(walletClient);
-            const network = await provider.getNetwork();
-            const actualChainId = Number(network.chainId);
-            
-            // console.log('Debug chain info:', {
-            //     wagmiChainId: currentChainId,
-            //     actualWalletChainId: actualChainId,
-            //     targetChainId: targetChainId
-            // });
-
-            // // Check if wallet is on the wrong chain
-            // if (actualChainId !== targetChainId) {
-            //     console.log(`Wallet is on chain ${actualChainId}, need to switch to ${targetChainId}`);
-                
-            //     try {
-            //         await switchChain({ chainId: targetChainId });
-            //         // Wait for the switch to complete
-            //         await new Promise(resolve => setTimeout(resolve, 2000));
-                    
-            //         // Re-create provider after chain switch
-            //         const newProvider = new ethers.BrowserProvider(walletClient);
-            //         const newNetwork = await newProvider.getNetwork();
-            //         const newChainId = Number(newNetwork.chainId);
-                    
-            //         console.log('After switch, chain ID is:', newChainId);
-                    
-            //         if (newChainId !== targetChainId) {
-            //             throw new Error(`Failed to switch to chain ${targetChainId}. Currently on ${newChainId}`);
-            //         }
-            //     } catch (switchError) {
-            //         console.error('Failed to switch chain:', switchError);
-            //         alert(`Please manually switch your wallet to the local network (Chain ID: ${targetChainId})`);
-            //         return;
-            //     }
-            // }
-
-            // Now get the signer from the correctly connected provider
             const signer = await provider.getSigner();
             const makerAddress = new Address(userAddress);
 
@@ -448,6 +458,10 @@ export default function Page() {
             const makingAmount = BigInt(Math.floor(borrowDebt * 10 ** borrowTokenDecimals));
             
             const takingAmount = BigInt(Math.floor(borrowDebt * 10 ** supplyTokenDecimals / parseFloat(limitPrice)));
+
+            await checkAndApproveLimitOrderProtocol(selectedBorrowPosition.address, makingAmount, signer);
+        
+            await checkAndApproveLimitOrderProtocol(selectedSupplyPosition.address, takingAmount, signer, true);
 
             console.log('Order parameters:', {
                 makingAmount: makingAmount.toString(),

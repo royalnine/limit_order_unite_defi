@@ -282,9 +282,9 @@ async function fillOrderOnProtocol(storedOrder: StoredOrder): Promise<any> {
     console.log(`  --from ${takerWallet.address}`)
     console.log('================================\n');
     console.log('filling order', orderStruct);
-    await checkAndApproveLimitOrderProtocol(orderStruct.makerAsset, BigInt(orderStruct.makingAmount), makerWallet);
+    // await checkAndApproveLimitOrderProtocol(orderStruct.makerAsset, BigInt(orderStruct.makingAmount), makerWallet);
     await checkAndApproveLimitOrderProtocol(orderStruct.takerAsset, takingAmount, takerWallet);
-    await checkAndApproveLimitOrderProtocol(orderStruct.takerAsset, takingAmount, makerWallet, true);
+    // await checkAndApproveLimitOrderProtocol(orderStruct.takerAsset, takingAmount, makerWallet, true);
     const tx = await contract.fillOrderArgs(
       orderStruct,
       r,
