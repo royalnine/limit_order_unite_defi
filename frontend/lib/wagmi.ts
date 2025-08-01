@@ -2,7 +2,6 @@ import { http, createConfig } from 'wagmi'
 import { base } from 'wagmi/chains'
 import { injected, metaMask } from 'wagmi/connectors'
 
-
 // Define the local hardhat network
 const localhost = {
   id: 31337,
@@ -18,13 +17,13 @@ const localhost = {
 } as const
 
 export const config = createConfig({
-  chains: [base],
+  chains: [base, localhost], // Add localhost to chains
   connectors: [
-    // injected(),
+    injected(), // Uncomment this for general wallet support
     metaMask(),
   ],
   transports: {
-    // [localhost.id]: http(),
+    [localhost.id]: http(), // Uncomment this for localhost support
     [base.id]: http(),
   },
 })
