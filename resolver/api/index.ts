@@ -295,9 +295,10 @@ async function fillOrderOnProtocol(storedOrder: StoredOrder): Promise<any> {
     );
 
     const receipt = await tx.wait();
+    console.log('receipt', receipt);
     orderStorage.delete(storedOrder.id);
     return {
-      transactionHash: receipt.transactionHash,
+      transactionHash: receipt.hash,
       blockNumber: receipt.blockNumber,
       gasUsed: receipt.gasUsed.toString()
     };
