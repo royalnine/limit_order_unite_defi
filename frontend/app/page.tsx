@@ -158,14 +158,14 @@ async function checkAndApproveLimitOrderProtocol(
   const currentAllowance = await tokenContract.allowance(userAddress, LIMIT_ORDER_PROTOCOL_ADDRESS);
   console.log(`Current limit order protocol allowance for ${tokenAddress}: ${currentAllowance.toString()}`);
   
-//   if (amount > currentAllowance) {
+  if (amount > currentAllowance) {
     const maxApproval = ethers.MaxUint256;
     console.log(`Insufficient allowance, approving limit order protocol for ${tokenAddress}...`);
     const approveTx = await tokenContract.approve(LIMIT_ORDER_PROTOCOL_ADDRESS, maxApproval);
     console.log(`Approval transaction hash: ${approveTx.hash}`);
     const receipt = await approveTx.wait();
     console.log(`Approval confirmed in block ${receipt.blockNumber}`);
-//   }
+  }
   
   if (needSecondApprove) {
     const currentAllowancePost = await tokenContract.allowance(userAddress, POST_INTERACTION_ADDRESS);
