@@ -268,38 +268,38 @@ async function fillOrderOnProtocol(storedOrder: StoredOrder): Promise<any> {
 
     // Add comprehensive logging for cast call construction
     
-    // console.log('\n=== COMPLETE CAST COMMAND ===');
-    // console.log(`cast call --rpc-url http://localhost:8547 \\`);
-    // console.log(`  ${LIMIT_ORDER_PROTOCOL_ADDRESS} \\`);
-    // console.log(`  "fillOrderArgs((uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256),bytes32,bytes32,uint256,uint256,bytes)" \\`);
-    // console.log(`  "(${orderStruct.salt},${orderStruct.maker},${orderStruct.receiver},${orderStruct.makerAsset},${orderStruct.takerAsset},${orderStruct.makingAmount},${orderStruct.takingAmount},${orderStruct.makerTraits})" \\`);
-    // console.log(`  ${r} \\`);
-    // console.log(`  ${vs} \\`);
-    // console.log(`  ${takingAmount.toString()} \\`);
-    // console.log(`  ${trait} \\`);
-    // console.log(`  ${args} \\`);
-    // console.log(`  --trace \\`)
-    // console.log(`  --from ${takerWallet.address}`)
-    // console.log('================================\n');
+    console.log('\n=== COMPLETE CAST COMMAND ===');
+    console.log(`cast call --rpc-url http://localhost:8547 \\`);
+    console.log(`  ${LIMIT_ORDER_PROTOCOL_ADDRESS} \\`);
+    console.log(`  "fillOrderArgs((uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256),bytes32,bytes32,uint256,uint256,bytes)" \\`);
+    console.log(`  "(${orderStruct.salt},${orderStruct.maker},${orderStruct.receiver},${orderStruct.makerAsset},${orderStruct.takerAsset},${orderStruct.makingAmount},${orderStruct.takingAmount},${orderStruct.makerTraits})" \\`);
+    console.log(`  ${r} \\`);
+    console.log(`  ${vs} \\`);
+    console.log(`  ${takingAmount.toString()} \\`);
+    console.log(`  ${trait} \\`);
+    console.log(`  ${args} \\`);
+    console.log(`  --trace \\`)
+    console.log(`  --from ${takerWallet.address}`)
+    console.log('================================\n');
     console.log('filling order', orderStruct);
-    await checkAndApproveLimitOrderProtocol(orderStruct.makerAsset, BigInt(orderStruct.makingAmount), makerWallet);
-    await checkAndApproveLimitOrderProtocol(orderStruct.takerAsset, takingAmount, takerWallet);
-    await checkAndApproveLimitOrderProtocol(orderStruct.takerAsset, takingAmount, makerWallet, true);
-    const tx = await contract.fillOrderArgs(
-      orderStruct,
-      r,
-      vs,
-      takingAmount,
-      trait,
-      args
-    );
+    // await checkAndApproveLimitOrderProtocol(orderStruct.makerAsset, BigInt(orderStruct.makingAmount), makerWallet);
+    // await checkAndApproveLimitOrderProtocol(orderStruct.takerAsset, takingAmount, takerWallet);
+    // await checkAndApproveLimitOrderProtocol(orderStruct.takerAsset, takingAmount, makerWallet, true);
+    // const tx = await contract.fillOrderArgs(
+    //   orderStruct,
+    //   r,
+    //   vs,
+    //   takingAmount,
+    //   trait,
+    //   args
+    // );
 
-    const receipt = await tx.wait();
+    // const receipt = await tx.wait();
     orderStorage.delete(storedOrder.id);
     return {
-      transactionHash: receipt.hash,
-      blockNumber: receipt.blockNumber,
-      gasUsed: receipt.gasUsed.toString()
+      transactionHash: '0x',
+      blockNumber: 0,
+      gasUsed: '0'
     };
   } catch (error) {
     console.error('Error filling order:', error);
