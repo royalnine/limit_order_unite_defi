@@ -12,14 +12,17 @@ import {
   ExtensionBuilder,
   Interaction
 } from '@1inch/limit-order-sdk';
+import { useAccount, useChainId, useConnect, useSwitchChain, useWalletClient } from 'wagmi';
+import { injected } from 'wagmi/connectors';
 
 
 const sdk = new CompassApiSDK({
     apiKeyAuth: process.env.NEXT_PUBLIC_COMPASS_API_KEY,
+    serverURL: 'http://localhost:8000'
 });
 
 // Constants for limit order creation (similar to backend)
-const chainId = 31337;
+// const chainId = 31337; // Remove this line
 const RESOLVER_URL = 'http://localhost:3001';
 const HARDCODED_TAKER_ADDRESS = '0xb8340945eBc917D2Aa0368a5e4E79C849c461511';
 const AAVE_POOL_ADDRESS = '0x794a61358D6845594F94dc1DB02A252b5b4814aD';
@@ -61,18 +64,6 @@ interface AaveTokenPosition {
     liquidityRate: string;
 }
 
-// Extend the Window interface to include ethereum
-declare global {
-    interface Window {
-        ethereum?: {
-            request: (args: { method: string; params?: any[] }) => Promise<any>;
-            on: (event: string, callback: (accounts: string[]) => void) => void;
-            removeListener?: (event: string, callback: (accounts: string[]) => void) => void;
-        };
-    }
-}
-
-// Helper functions for encoding multicall interactions (from backend)
 function encodeAaveSupply(amount: bigint, trader: Address, supplyTokenAddress: string): string {
     const aavePoolAbi = [
         'function supply(address asset, uint256 amount, address onBehalfOf, uint16 referralCode)'
@@ -177,11 +168,11 @@ async function submitOrderToResolver(order: LimitOrder, signature: string): Prom
 }
 
 export default function Page() {
-    const [walletConnected, setWalletConnected] = useState(false);
-    const [userAddress, setUserAddress] = useState('');
-    // Add these new state variables for account selection
-    const [availableAccounts, setAvailableAccounts] = useState<string[]>([]);
-    const [showAccountSelector, setShowAccountSelector] = useState(false);
+    const targetChainId = 31337;
+    const { address: userAddress, isConnected: walletConnected } = useAccount();
+    const { connect, connectors, isPending: isConnecting } = useConnect();
+    const { data: walletClient } = useWalletClient({ chainId: targetChainId });
+    
     const [accountSummary, setAccountSummary] = useState<AaveAccountSummary | null>(null);
     const [tokenPositions, setTokenPositions] = useState<AaveTokenPosition[]>([]);
     const [supportedTokens, setSupportedTokens] = useState<AaveSupportedTokensResponse>();
@@ -191,9 +182,18 @@ export default function Page() {
     const [isLoading, setIsLoading] = useState(false);
     const [limitPrice, setLimitPrice] = useState('');
     const [isSubmitting, setIsSubmitting] = useState(false);
-    const [isConnecting, setIsConnecting] = useState(false);
 
-    // Helper functions to filter positions
+    const currentChainId = useChainId();
+    console.log('currentChainId', currentChainId);
+    const { switchChain } = useSwitchChain();
+    
+
+    // Remove this auto-switching logic from here - it causes infinite loops
+    // if (currentChainId !== targetChainId) {
+    //     console.log(`Switching from chain ${currentChainId} to ${targetChainId}`);
+    //     switchChain({ chainId: targetChainId });
+    // }
+
     const getSupplyPositions = () => {
         return tokenPositions.filter(position => parseFloat(position.tokenBalance) > 0);
     };
@@ -204,17 +204,15 @@ export default function Page() {
         );
     };
 
-    // Load AAVE data using Compass API
     const loadAaveData = async (userAddress: string) => {
-        
+                
         setIsLoading(true);
         
         try {
             console.log('Loading AAVE data for address:', userAddress);
             
-            // Step 1: Get account summary (total health factor and other metrics)
             const summaryResponse = await sdk.aaveV3.userPositionSummary({
-                chain: 'base:mainnet', // You can make this configurable
+                chain: 'base:mainnet',
                 user: userAddress,
             });
             
@@ -223,16 +221,14 @@ export default function Page() {
                 console.log('Account summary:', summaryResponse);
             }
             
-            // Step 2: Get supported tokens
             const tokensResponse = await sdk.aaveV3.aaveSupportedTokens({
-                chain: 'base:mainnet', // You can make this configurable
+                chain: 'base:mainnet',
             });
             
             if (tokensResponse) {
                 setSupportedTokens(tokensResponse);
                 console.log('Supported tokens:', tokensResponse);
                 
-                // Step 3: Get position for each supported token
                 const tokenPositions: AaveTokenPosition[] = [];
                 
                 for (const token of tokensResponse.tokens) {
@@ -244,7 +240,6 @@ export default function Page() {
                         });
                         
                         if (positionResponse) {
-                            // Only include positions where user has some balance or debt
                             const hasBalance = parseFloat(positionResponse.tokenBalance) > 0;
                             const hasDebt = parseFloat(positionResponse.stableDebt) > 0 || 
                                           parseFloat(positionResponse.variableDebt) > 0;
@@ -268,101 +263,90 @@ export default function Page() {
             
         } catch (error) {
             console.error('Error loading AAVE data:', error);
-            // You might want to show an error message to the user
         } finally {
             setIsLoading(false);
         }
     };
 
-    // Modified connect wallet function
     const connectWallet = async () => {
-        setIsConnecting(true);
-        
         try {
-            // Check if MetaMask is installed
-            if (typeof window.ethereum === 'undefined') {
-                alert('MetaMask is not installed. Please install MetaMask to continue.');
-                return;
-            }
-
-            // First try to get existing accounts without requesting
-            let accounts = await window.ethereum.request({
-                method: 'eth_accounts',
-            });
-
-            // If no accounts, request access
-            if (accounts.length === 0) {
-                accounts = await window.ethereum.request({
-                    method: 'eth_requestAccounts',
-                });
-            }
-
-            if (accounts.length > 0) {
-                console.log('Available accounts:', accounts);
-                setAvailableAccounts(accounts);
-                
-                // If only one account, connect automatically
-                if (accounts.length === 1) {
-                    await selectAccount(accounts[0]);
-                } else {
-                    // Multiple accounts - show selector
-                    setShowAccountSelector(true);
-                }
+            const injectedConnector = connectors.find(c => c.id === 'injected');
+            if (injectedConnector) {
+                connect({ connector: injectedConnector });
+            } else {
+                alert('No wallet connector found. Please install MetaMask or another compatible wallet.');
             }
         } catch (error: any) {
             console.error('Failed to connect wallet:', error);
-            
-            if (error.code === 4001) {
-                alert('Please connect your wallet to continue.');
-            } else if (error.message && error.message.includes('already pending')) {
-                alert('A wallet connection request is already pending. Please check MetaMask and complete the request.');
-            } else {
-                alert('Failed to connect wallet. Please try again.');
-            }
-        } finally {
-            setIsConnecting(false);
+            alert('Failed to connect wallet. Please try again.');
         }
     };
 
-    // New function to handle account selection
-    const selectAccount = async (account: string) => {
-        console.log('Selecting account:', account);
-        setUserAddress(account);
-        setWalletConnected(true);
-        setShowAccountSelector(false);
-        await loadAaveData(account);
-        console.log('Wallet connected:', account);
-    };
+    useEffect(() => {
+        if (walletConnected && userAddress) {
+            loadAaveData(userAddress);
+            console.log('Wallet connected:', userAddress);
+        }
+    }, [walletConnected, userAddress]);
 
     const submitLimitOrder = async () => {
+        setIsSubmitting(true);
         if (!selectedSupplyPosition || !selectedBorrowPosition || !limitPrice || !userAddress) return;
 
-        setIsSubmitting(true);
-
         try {
-            // Check if MetaMask is available
-            if (typeof window.ethereum === 'undefined') {
-                throw new Error('MetaMask is not installed');
+            if (!walletClient) {
+                throw new Error('Wallet not connected');
             }
 
-            // Set up provider and signer
-            const provider = new ethers.BrowserProvider(window.ethereum);
+            // Create provider and get the ACTUAL chain ID from the wallet
+            const provider = new ethers.BrowserProvider(walletClient);
+            const network = await provider.getNetwork();
+            const actualChainId = Number(network.chainId);
+            
+            console.log('Debug chain info:', {
+                wagmiChainId: currentChainId,
+                actualWalletChainId: actualChainId,
+                targetChainId: targetChainId
+            });
+
+            // Check if wallet is on the wrong chain
+            if (actualChainId !== targetChainId) {
+                console.log(`Wallet is on chain ${actualChainId}, need to switch to ${targetChainId}`);
+                
+                try {
+                    await switchChain({ chainId: targetChainId });
+                    // Wait for the switch to complete
+                    await new Promise(resolve => setTimeout(resolve, 2000));
+                    
+                    // Re-create provider after chain switch
+                    const newProvider = new ethers.BrowserProvider(walletClient);
+                    const newNetwork = await newProvider.getNetwork();
+                    const newChainId = Number(newNetwork.chainId);
+                    
+                    console.log('After switch, chain ID is:', newChainId);
+                    
+                    if (newChainId !== targetChainId) {
+                        throw new Error(`Failed to switch to chain ${targetChainId}. Currently on ${newChainId}`);
+                    }
+                } catch (switchError) {
+                    console.error('Failed to switch chain:', switchError);
+                    alert(`Please manually switch your wallet to the local network (Chain ID: ${targetChainId})`);
+                    return;
+                }
+            }
+
+            // Now get the signer from the correctly connected provider
             const signer = await provider.getSigner();
             const makerAddress = new Address(userAddress);
 
-            // Calculate amounts
-            // makingAmount is the total amount of borrow position to be swapped (in borrow token)
             const borrowDebt = parseFloat(selectedBorrowPosition.variableDebt) + parseFloat(selectedBorrowPosition.stableDebt);
             
             // TODO work out values here properly
-            // Get decimals - assume 18 for now, should be retrieved from token info
-            const borrowTokenDecimals = 6; // This should be dynamic based on token
-            const supplyTokenDecimals = 18; // This should be dynamic based on token
+            const borrowTokenDecimals = 6;
+            const supplyTokenDecimals = 18;
             
             const makingAmount = BigInt(Math.floor(borrowDebt * 10 ** borrowTokenDecimals));
             
-            // takingAmount will be calculated based on limit price for now (hardcoded)
-            // This should be: makingAmount * limitPrice adjusted for decimals
             const takingAmount = BigInt(Math.floor(parseFloat(limitPrice) * borrowDebt * 10 ** supplyTokenDecimals));
 
             console.log('Order parameters:', {
@@ -374,34 +358,29 @@ export default function Page() {
                 limitPrice: limitPrice
             });
 
-            // Set expiration (20 minutes from now)
-            const expiresIn = BigInt(1200); // 20m
+            const expiresIn = BigInt(1200);
             const expiration = BigInt(Math.floor(Date.now() / 1000)) + expiresIn;
 
-            // Create maker traits
             const makerTraits = MakerTraits.default()
                 .withExpiration(expiration)
                 .allowMultipleFills()
                 .allowPartialFills()
                 .enablePostInteraction();
 
-            // Build multicall interaction for post-interaction (supply to Aave)
             const multicallInteraction = buildMulticallInteraction(
                 takingAmount, 
                 makerAddress, 
                 selectedSupplyPosition.address
             );
             
-            // Create extension with post interaction
             const customExtension = new ExtensionBuilder()
                 .withPostInteraction(multicallInteraction)
                 .build();
 
-            // Create the limit order
             const orderWithExtension = new LimitOrder(
                 {
-                    makerAsset: new Address(selectedBorrowPosition.address), // borrow token
-                    takerAsset: new Address(selectedSupplyPosition.address), // supply token
+                    makerAsset: new Address(selectedBorrowPosition.address),
+                    takerAsset: new Address(selectedSupplyPosition.address),
                     makingAmount: makingAmount,
                     takingAmount: takingAmount,
                     maker: makerAddress,
@@ -411,8 +390,11 @@ export default function Page() {
                 customExtension
             );
 
-            // Get typed data and sign
-            const typedData = orderWithExtension.getTypedData(chainId);
+            // Use the target chain ID for signing (now that we've verified the wallet is on the right chain)
+            const typedData = orderWithExtension.getTypedData(targetChainId);
+            console.log('Signing with chain ID:', targetChainId);
+            console.log('TypedData domain:', typedData.domain);
+            
             const signature = await signer.signTypedData(
                 typedData.domain,
                 { Order: typedData.types.Order },
@@ -421,13 +403,11 @@ export default function Page() {
 
             console.log('Order signed, submitting to resolver...');
 
-            // Submit to resolver
             const orderId = await submitOrderToResolver(orderWithExtension, signature);
             
             console.log(`Order submitted with ID: ${orderId}`);
             alert(`Liquidation protection set up successfully! Order ID: ${orderId}`);
             
-            // Reset form
             setLimitPrice('');
             setSelectedSupplyPosition(null);
             setSelectedBorrowPosition(null);
@@ -438,6 +418,8 @@ export default function Page() {
             if (error instanceof Error) {
                 if (error.message.includes('User rejected')) {
                     alert('Transaction was rejected by user');
+                } else if (error.message.includes('chainId')) {
+                    alert(`Chain mismatch error: ${error.message}\n\nPlease make sure your wallet is connected to the local network (Chain ID: 31337)`);
                 } else {
                     alert(`Failed to set up liquidation protection: ${error.message}`);
                 }
@@ -481,36 +463,6 @@ export default function Page() {
             </header>
 
             <main className="max-w-7xl mx-auto px-6 py-8">
-                {/* Account Selection Modal */}
-                {showAccountSelector && (
-                    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-                        <div className="bg-white p-6 rounded-lg shadow-xl max-w-md w-full mx-4">
-                            <h3 className="text-lg font-semibold mb-4">Select Account</h3>
-                            <p className="text-gray-600 mb-4">Choose which account you want to connect:</p>
-                            <div className="space-y-2">
-                                {availableAccounts.map((account, index) => (
-                                    <button
-                                        key={account}
-                                        onClick={() => selectAccount(account)}
-                                        className="w-full p-3 text-left border border-gray-200 rounded-lg hover:bg-blue-50 hover:border-blue-300 transition-colors"
-                                    >
-                                        <div className="font-medium">Account {index + 1}</div>
-                                        <div className="text-sm text-gray-500 font-mono">
-                                            {account.slice(0, 6)}...{account.slice(-4)}
-                                        </div>
-                                    </button>
-                                ))}
-                            </div>
-                            <button
-                                onClick={() => setShowAccountSelector(false)}
-                                className="mt-4 w-full p-2 text-gray-600 border border-gray-300 rounded-lg hover:bg-gray-50"
-                            >
-                                Cancel
-                            </button>
-                        </div>
-                    </div>
-                )}
-
                 {/* Wallet Connection Section */}
                 {!walletConnected ? (
                     <div className="text-center py-20">

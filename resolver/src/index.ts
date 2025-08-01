@@ -1,4 +1,5 @@
 import express from 'express';
+import cors from 'cors';
 import { createHash } from 'crypto';
 import { ethers } from 'ethers';
 import dotenv from 'dotenv';
@@ -67,6 +68,13 @@ function reconstructOrderWithExtension(orderStruct: LimitOrderV4Struct, extensio
 
 const app = express();
 const PORT = process.env.PORT || 3001;
+
+// Enable CORS for all routes and origins
+app.use(cors({
+  origin: '*', // Allow requests from any origin
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+}));
 
 app.use(express.json());
 
