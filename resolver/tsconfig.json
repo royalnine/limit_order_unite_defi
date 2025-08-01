@@ -1,28 +1,19 @@
 {
 	"compilerOptions": {
 		"target": "ES2022",
-		"module": "ESNext",
+		"module": "CommonJS",
 		"moduleResolution": "Node",
 		"strict": true,
 		"esModuleInterop": true,
+		"allowSyntheticDefaultImports": true,
 		"resolveJsonModule": true,
-		"outDir": "dist",
-		"rootDir": "src",
-		"types": ["node"],
-		"sourceMap": true,
-		"inlineSourceMap": false,
-		"inlineSources": true,
-		"declaration": true,
-		"declarationMap": true,
 		"allowJs": true,
-		"checkJs": false,
-		"allowSyntheticDefaultImports": true
+		"skipLibCheck": true,
+		"forceConsistentCasingInFileNames": true,
+		"types": ["node"],
+		"declaration": false,
+		"sourceMap": false
 	},
-	"ts-node": {
-		"esm": true,
-		"transpileOnly": true,
-		"experimentalSpecifierResolution": "node"
-	},
-	"include": ["src"],
-	"exclude": ["node_modules", "dist"]
+	"include": ["api/**/*"],
+	"exclude": ["node_modules", "dist", ".vercel"]
 }

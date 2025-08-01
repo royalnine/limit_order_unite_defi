@@ -1,12 +1,8 @@
 {
   "name": "resolver",
   "version": "1.0.0",
-  "main": "src/index.ts",
   "scripts": {
-    "dev": "ts-node src/index.ts",
-    "build": "tsc",
-    "start": "node dist/index.js",
-    "vercel-dev": "vercel dev",
+    "dev": "vercel dev",
     "deploy": "vercel --prod",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
@@ -24,7 +20,6 @@
     "@1inch/limit-order-sdk": "^4.9.5-rc.0",
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.3",
-    "@vercel/kv": "^3.0.0",
     "cors": "^2.8.5",
     "dotenv": "^17.2.1",
     "ethers": "^6.15.0",

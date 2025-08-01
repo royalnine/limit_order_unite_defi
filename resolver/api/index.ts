@@ -9,7 +9,6 @@ import {
   Extension
 } from '@1inch/limit-order-sdk';
 import { TakerTraits } from '@1inch/limit-order-sdk'
-import { OrderStorage } from './storage';
 
 
 dotenv.config();
@@ -33,7 +32,7 @@ interface SubmitOrderRequest {
   isLong: boolean;
 }
 
-export interface StoredOrder {
+interface StoredOrder {
   id: string;
   order: LimitOrderV4Struct;
   signature: string;
@@ -42,7 +41,6 @@ export interface StoredOrder {
   limitPriceUsd: number;
   isLong: boolean;
 }
-
 
 const LIMIT_ORDER_PROTOCOL_ADDRESS = '0x111111125421cA6dc452d289314280a0f8842A65';
 const MAKER_PRIVATE_KEY = process.env.MAKER_PRIVATE_KEY;
@@ -58,11 +56,22 @@ const ERC20_ABI = [
   'function symbol() view returns (string)'
 ];
 
-const makerWallet = new ethers.Wallet(MAKER_PRIVATE_KEY as string, new ethers.JsonRpcProvider(process.env.BASE_RPC_URL));
-const takerWallet = new ethers.Wallet(TAKER_PRIVATE_KEY as string, new ethers.JsonRpcProvider(process.env.BASE_RPC_URL));
+const orderStorage = new Map<string, StoredOrder>();
+
+// Setup RPC provider
+const provider = new ethers.JsonRpcProvider(process.env.ARB_RPC_URL || 'https://arb1.arbitrum.io/rpc');
+const makerWallet = new ethers.Wallet(MAKER_PRIVATE_KEY!, provider);
+const takerWallet = new ethers.Wallet(TAKER_PRIVATE_KEY!, provider);
+
+
+function reconstructOrderWithExtension(orderStruct: LimitOrderV4Struct, extension: string): LimitOrder {
+    const extensionObj = Extension.decode(extension);
+    const reconstructedOrder = LimitOrder.fromDataAndExtension(orderStruct, extensionObj);
+    
+    return reconstructedOrder;
+}
 
 const app = express();
-const PORT = process.env.PORT || 3001;
 
 // Enable CORS for all routes and origins
 app.use(cors({
@@ -120,14 +129,14 @@ async function getFillableOrders(): Promise<StoredOrder[]> {
   const fillableOrders: StoredOrder[] = [];
   
   // Use for...of instead of forEach for async operations
-  for (const order of await OrderStorage.values()) {
+  for (const order of orderStorage.values()) {
     try {
       const { makerTokenPrice, takerTokenPrice } = await getSpotPrices(order.order.makerAsset, order.order.takerAsset);
       const priceRatio = takerTokenPrice / makerTokenPrice;
       
       console.log(`Order ${order.id}: limitPriceUsd=${order.limitPriceUsd}, priceRatio=${priceRatio}, isLong=${order.isLong}`);
       
-      if (!order.isLong) {
+      if (order.isLong) {
         if (order.limitPriceUsd > priceRatio) {
           fillableOrders.push(order);
           console.log(`Order ${order.id} is fillable (long)`);
@@ -153,7 +162,7 @@ app.get('/fillable-orders', async (req, res) => {
   res.json(serializedOrders);
 });
 
-app.post('/submit-order', async (req, res) => {
+app.post('/submit-order', (req, res) => {
   try {
     const { order, signature, extension, limitPriceUsd, isLong }: SubmitOrderRequest = req.body;
     
@@ -163,7 +172,7 @@ app.post('/submit-order', async (req, res) => {
 
     const orderId = generateOrderId(order);
     
-    if (await OrderStorage.has(orderId)) {
+    if (orderStorage.has(orderId)) {
       return res.status(409).json({ error: 'Order already exists' });
     }
 
@@ -180,7 +189,7 @@ app.post('/submit-order', async (req, res) => {
       isLong
     };
 
-    await OrderStorage.set(orderId, storedOrder);
+    orderStorage.set(orderId, storedOrder);
 
     console.log(`Order stored with ID: ${orderId}`);
     console.log('Received order:', order);
@@ -198,19 +207,19 @@ app.post('/submit-order', async (req, res) => {
 });
 
 app.get('/orders', (req, res) => {
-  OrderStorage.values().then(orders => {
-    res.json(orders);
-  });
+  const orders = Array.from(orderStorage.values());
+  res.json(orders);
 });
 
 app.get('/orders/:id', (req, res) => {
   const { id } = req.params;
-  OrderStorage.get(id).then(order => {
-    if (!order) {
-      return res.status(404).json({ error: 'Order not found' });
-    }
-    res.json(order);
-  });
+  const order = orderStorage.get(id);
+  
+  if (!order) {
+    return res.status(404).json({ error: 'Order not found' });
+  }
+  
+  res.json(order);
 });
 
 async function fillOrderOnProtocol(storedOrder: StoredOrder): Promise<any> {
@@ -286,7 +295,7 @@ async function fillOrderOnProtocol(storedOrder: StoredOrder): Promise<any> {
     );
 
     const receipt = await tx.wait();
-    await OrderStorage.delete(storedOrder.id);
+    orderStorage.delete(storedOrder.id);
     return {
       transactionHash: receipt.hash,
       blockNumber: receipt.blockNumber,
@@ -329,7 +338,7 @@ async function checkAndApproveLimitOrderProtocol(
 app.post('/fill-order/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const storedOrder = await OrderStorage.get(id);
+    const storedOrder = orderStorage.get(id);
     
     if (!storedOrder) {
       return res.status(404).json({ error: 'Order not found' });
@@ -355,19 +364,6 @@ app.post('/fill-order/:id', async (req, res) => {
   }
 });
 
-function reconstructOrderWithExtension(orderStruct: LimitOrderV4Struct, extension: string): LimitOrder {
-    const extensionObj = Extension.decode(extension);
-    const reconstructedOrder = LimitOrder.fromDataAndExtension(orderStruct, extensionObj);
-    
-    return reconstructedOrder;
-}
-
-// Export the Express app for Vercel
+// Export for Vercel serverless function
 export default app;
 
-// Only start the server in development/local environment
-if (process.env.NODE_ENV !== 'production' && require.main === module) {
-  app.listen(PORT, () => {
-    console.log(`Order resolver server running on port ${PORT}`);
-  });
-}
