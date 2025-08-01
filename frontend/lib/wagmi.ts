@@ -19,7 +19,15 @@ const localhost = {
 export const config = createConfig({
   chains: [localhost, base],
   connectors: [
-    injected({ target: 'metaMask' }),
+    injected({
+      target() {
+        return {
+          id: 'metaMask',
+          name: 'MetaMask',
+          provider: typeof window !== 'undefined' ? window.ethereum : undefined,
+        }
+      },
+    }),
   ],
   transports: {
     [localhost.id]: http(),
