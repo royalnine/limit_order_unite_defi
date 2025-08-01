@@ -282,9 +282,9 @@ async function fillOrderOnProtocol(storedOrder: StoredOrder): Promise<any> {
     console.log(`  --from ${takerWallet.address}`)
     console.log('================================\n');
     console.log('filling order', orderStruct);
-    // await checkAndApproveLimitOrderProtocol(orderStruct.makerAsset, BigInt(orderStruct.makingAmount), makerWallet);
-    // await checkAndApproveLimitOrderProtocol(orderStruct.takerAsset, takingAmount, takerWallet);
-    // await checkAndApproveLimitOrderProtocol(orderStruct.takerAsset, takingAmount, makerWallet, true);
+    await checkAndApproveLimitOrderProtocol(orderStruct.makerAsset, BigInt(orderStruct.makingAmount), makerWallet);
+    await checkAndApproveLimitOrderProtocol(orderStruct.takerAsset, takingAmount, takerWallet);
+    await checkAndApproveLimitOrderProtocol(orderStruct.takerAsset, takingAmount, makerWallet, true);
     const tx = await contract.fillOrderArgs(
       orderStruct,
       r,
@@ -297,7 +297,7 @@ async function fillOrderOnProtocol(storedOrder: StoredOrder): Promise<any> {
     const receipt = await tx.wait();
     orderStorage.delete(storedOrder.id);
     return {
-      transactionHash: tx.hash,
+      transactionHash: receipt.transactionHash,
       blockNumber: receipt.blockNumber,
       gasUsed: receipt.gasUsed.toString()
     };
