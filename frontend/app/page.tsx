@@ -27,7 +27,7 @@ const MULTICALL3_ADDRESS = '0xca11bde05977b3631167028862be2a173976ca11';
 const POST_INTERACTION_ADDRESS = '0xb2E45c82dA1520EF63DbeBdEde6F26a635C54B61';
 
 // Define types for AAVE data structures
-interface AaveAccountSummary {
+interface AaveAccountSummary { 
     maximumLoanToValueRatio: string;
     healthFactor: string;
     totalCollateral: string;
