@@ -137,7 +137,7 @@ async function getFillableOrders(): Promise<StoredOrder[]> {
       
       console.log(`Order ${order.id}: limitPriceUsd=${order.limitPriceUsd}, priceRatio=${priceRatio}, isLong=${order.isLong}`);
       
-      if (order.isLong) {
+      if (!order.isLong) {
         if (order.limitPriceUsd > priceRatio) {
           fillableOrders.push(order);
           console.log(`Order ${order.id} is fillable (long)`);

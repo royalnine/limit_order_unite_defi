@@ -192,9 +192,9 @@ export default function Page() {
     // Fill order state
     const [fillingOrderId, setFillingOrderId] = useState<string | null>(null);
 
-    const currentChainId = useChainId();
-    console.log('currentChainId', currentChainId);
-    const { switchChain } = useSwitchChain();
+    // const currentChainId = useChainId();
+    // console.log('currentChainId', currentChainId);
+    // const { switchChain } = useSwitchChain();
     
 
     // Remove this auto-switching logic from here - it causes infinite loops
@@ -404,37 +404,37 @@ export default function Page() {
             const network = await provider.getNetwork();
             const actualChainId = Number(network.chainId);
             
-            console.log('Debug chain info:', {
-                wagmiChainId: currentChainId,
-                actualWalletChainId: actualChainId,
-                targetChainId: targetChainId
-            });
+            // console.log('Debug chain info:', {
+            //     wagmiChainId: currentChainId,
+            //     actualWalletChainId: actualChainId,
+            //     targetChainId: targetChainId
+            // });
 
-            // Check if wallet is on the wrong chain
-            if (actualChainId !== targetChainId) {
-                console.log(`Wallet is on chain ${actualChainId}, need to switch to ${targetChainId}`);
+            // // Check if wallet is on the wrong chain
+            // if (actualChainId !== targetChainId) {
+            //     console.log(`Wallet is on chain ${actualChainId}, need to switch to ${targetChainId}`);
                 
-                try {
-                    await switchChain({ chainId: targetChainId });
-                    // Wait for the switch to complete
-                    await new Promise(resolve => setTimeout(resolve, 2000));
+            //     try {
+            //         await switchChain({ chainId: targetChainId });
+            //         // Wait for the switch to complete
+            //         await new Promise(resolve => setTimeout(resolve, 2000));
                     
-                    // Re-create provider after chain switch
-                    const newProvider = new ethers.BrowserProvider(walletClient);
-                    const newNetwork = await newProvider.getNetwork();
-                    const newChainId = Number(newNetwork.chainId);
+            //         // Re-create provider after chain switch
+            //         const newProvider = new ethers.BrowserProvider(walletClient);
+            //         const newNetwork = await newProvider.getNetwork();
+            //         const newChainId = Number(newNetwork.chainId);
                     
-                    console.log('After switch, chain ID is:', newChainId);
+            //         console.log('After switch, chain ID is:', newChainId);
                     
-                    if (newChainId !== targetChainId) {
-                        throw new Error(`Failed to switch to chain ${targetChainId}. Currently on ${newChainId}`);
-                    }
-                } catch (switchError) {
-                    console.error('Failed to switch chain:', switchError);
-                    alert(`Please manually switch your wallet to the local network (Chain ID: ${targetChainId})`);
-                    return;
-                }
-            }
+            //         if (newChainId !== targetChainId) {
+            //             throw new Error(`Failed to switch to chain ${targetChainId}. Currently on ${newChainId}`);
+            //         }
+            //     } catch (switchError) {
+            //         console.error('Failed to switch chain:', switchError);
+            //         alert(`Please manually switch your wallet to the local network (Chain ID: ${targetChainId})`);
+            //         return;
+            //     }
+            // }
 
             // Now get the signer from the correctly connected provider
             const signer = await provider.getSigner();
