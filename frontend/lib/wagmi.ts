@@ -1,5 +1,5 @@
 import { http, createConfig } from 'wagmi'
-import { mainnet, arbitrum } from 'wagmi/chains'
+import { base } from 'wagmi/chains'
 import { injected } from 'wagmi/connectors'
 
 // Define the local hardhat network
@@ -17,14 +17,13 @@ const localhost = {
 } as const
 
 export const config = createConfig({
-  chains: [localhost],
+  chains: [localhost, base],
   connectors: [
     injected({ target: 'metaMask' }),
   ],
   transports: {
     [localhost.id]: http(),
-    // [mainnet.id]: http(),
-    // [arbitrum.id]: http(),
+    [base.id]: http(),
   },
 })
 
