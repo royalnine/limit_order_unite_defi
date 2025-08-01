@@ -13,10 +13,10 @@
   "devDependencies": {
     "@nomicfoundation/hardhat-chai-matchers": "^2.0.0",
     "@nomicfoundation/hardhat-ethers": "^3.0.0",
+    "@nomicfoundation/hardhat-ignition-ethers": "^0.15.0",
     "@nomicfoundation/hardhat-network-helpers": "^1.0.0",
     "@nomicfoundation/hardhat-toolbox": "^6.1.0",
     "@nomicfoundation/hardhat-verify": "^2.1.0",
-    "@nomicfoundation/hardhat-ignition-ethers": "^0.15.0",
     "@types/chai": "^4.2.0",
     "@types/mocha": ">=9.1.0",
     "@types/node": ">=16.0.0",
@@ -32,6 +32,7 @@
     "@1inch/limit-order-protocol": "^2.0.5",
     "@1inch/solidity-utils": "^6.6.0",
     "@nomicfoundation/hardhat-toolbox": "^6.1.0",
-    "@openzeppelin/contracts": "^4.9.0"
+    "@openzeppelin/contracts": "^4.9.0",
+    "dotenv": "^17.2.1"
   }
 }
