@@ -99,4 +99,5 @@ ONEINCH_API_KEY=<one_inch_api_key>
 
 ## Future work
 
-This can go beyond just AAVE, this can be expanded to support any kind of lending protocol out there.
+- This can go beyond just AAVE, this can be expanded to support any kind of lending protocol out there.
+- The in memory part of the resolver api needs to change to any form of permanent storage, upon redeployment of the service all submitted orders will be lost.
