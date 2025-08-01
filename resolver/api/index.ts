@@ -269,7 +269,7 @@ async function fillOrderOnProtocol(storedOrder: StoredOrder): Promise<any> {
     // Add comprehensive logging for cast call construction
     
     console.log('\n=== COMPLETE CAST COMMAND ===');
-    console.log(`cast call --rpc-url http://localhost:8547 \\`);
+    console.log(`cast call --rpc-url ${process.env.BASE_RPC_URL} \\`);
     console.log(`  ${LIMIT_ORDER_PROTOCOL_ADDRESS} \\`);
     console.log(`  "fillOrderArgs((uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256),bytes32,bytes32,uint256,uint256,bytes)" \\`);
     console.log(`  "(${orderStruct.salt},${orderStruct.maker},${orderStruct.receiver},${orderStruct.makerAsset},${orderStruct.takerAsset},${orderStruct.makingAmount},${orderStruct.takingAmount},${orderStruct.makerTraits})" \\`);
