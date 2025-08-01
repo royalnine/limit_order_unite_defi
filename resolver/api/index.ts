@@ -285,21 +285,21 @@ async function fillOrderOnProtocol(storedOrder: StoredOrder): Promise<any> {
     // await checkAndApproveLimitOrderProtocol(orderStruct.makerAsset, BigInt(orderStruct.makingAmount), makerWallet);
     // await checkAndApproveLimitOrderProtocol(orderStruct.takerAsset, takingAmount, takerWallet);
     // await checkAndApproveLimitOrderProtocol(orderStruct.takerAsset, takingAmount, makerWallet, true);
-    // const tx = await contract.fillOrderArgs(
-    //   orderStruct,
-    //   r,
-    //   vs,
-    //   takingAmount,
-    //   trait,
-    //   args
-    // );
+    const tx = await contract.fillOrderArgs(
+      orderStruct,
+      r,
+      vs,
+      takingAmount,
+      trait,
+      args
+    );
 
-    // const receipt = await tx.wait();
+    const receipt = await tx.wait();
     orderStorage.delete(storedOrder.id);
     return {
-      transactionHash: '0x',
-      blockNumber: 0,
-      gasUsed: '0'
+      transactionHash: tx.hash,
+      blockNumber: receipt.blockNumber,
+      gasUsed: receipt.gasUsed.toString()
     };
   } catch (error) {
     console.error('Error filling order:', error);
