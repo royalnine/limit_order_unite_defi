@@ -17,7 +17,6 @@ import { useAccount, useChainId, useConnect, useSwitchChain, useWalletClient } f
 
 const sdk = new CompassApiSDK({
     apiKeyAuth: process.env.NEXT_PUBLIC_COMPASS_API_KEY,
-    serverURL: 'http://localhost:8000'
 });
 
 // Constants for limit order creation (similar to backend)
