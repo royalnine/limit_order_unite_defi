@@ -23,7 +23,6 @@ const sdk = new CompassApiSDK({
 // Constants for limit order creation (similar to backend)
 // const chainId = 31337; // Remove this line
 const RESOLVER_URL = 'http://localhost:3001';
-const HARDCODED_TAKER_ADDRESS = '0xb8340945eBc917D2Aa0368a5e4E79C849c461511';
 const AAVE_POOL_ADDRESS = '0x794a61358D6845594F94dc1DB02A252b5b4814aD';
 const MULTICALL3_ADDRESS = '0xca11bde05977b3631167028862be2a173976ca11';
 const POST_INTERACTION_ADDRESS = '0xb2E45c82dA1520EF63DbeBdEde6F26a635C54B61';
