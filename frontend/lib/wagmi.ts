@@ -1,6 +1,7 @@
 import { http, createConfig } from 'wagmi'
 import { base } from 'wagmi/chains'
-import { injected } from 'wagmi/connectors'
+import { injected, metaMask } from 'wagmi/connectors'
+
 
 // Define the local hardhat network
 const localhost = {
@@ -19,15 +20,8 @@ const localhost = {
 export const config = createConfig({
   chains: [base],
   connectors: [
-    injected({
-      target() {
-        return {
-          id: 'metaMask',
-          name: 'MetaMask',
-          provider: typeof window !== 'undefined' ? window.ethereum : undefined,
-        }
-      },
-    }),
+    // injected(),
+    metaMask(),
   ],
   transports: {
     // [localhost.id]: http(),
