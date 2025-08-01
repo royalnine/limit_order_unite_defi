@@ -59,7 +59,7 @@ const ERC20_ABI = [
 const orderStorage = new Map<string, StoredOrder>();
 
 // Setup RPC provider
-const provider = new ethers.JsonRpcProvider(process.env.ARB_RPC_URL || 'https://arb1.arbitrum.io/rpc');
+const provider = new ethers.JsonRpcProvider(process.env.BASE_RPC_URL as string);
 const makerWallet = new ethers.Wallet(MAKER_PRIVATE_KEY!, provider);
 const takerWallet = new ethers.Wallet(TAKER_PRIVATE_KEY!, provider);
 
@@ -137,12 +137,12 @@ async function getFillableOrders(): Promise<StoredOrder[]> {
       console.log(`Order ${order.id}: limitPriceUsd=${order.limitPriceUsd}, priceRatio=${priceRatio}, isLong=${order.isLong}`);
       
       if (order.isLong) {
-        if (order.limitPriceUsd > priceRatio) {
+        if (order.limitPriceUsd < priceRatio) {
           fillableOrders.push(order);
           console.log(`Order ${order.id} is fillable (long)`);
         }
       } else {
-        if (order.limitPriceUsd < priceRatio) {
+        if (order.limitPriceUsd > priceRatio) {
           fillableOrders.push(order);
           console.log(`Order ${order.id} is fillable (short)`);
         }
@@ -281,7 +281,7 @@ async function fillOrderOnProtocol(storedOrder: StoredOrder): Promise<any> {
     // console.log(`  --trace \\`)
     // console.log(`  --from ${takerWallet.address}`)
     // console.log('================================\n');
-
+    console.log('filling order', orderStruct);
     await checkAndApproveLimitOrderProtocol(orderStruct.makerAsset, BigInt(orderStruct.makingAmount), makerWallet);
     await checkAndApproveLimitOrderProtocol(orderStruct.takerAsset, takingAmount, takerWallet);
     await checkAndApproveLimitOrderProtocol(orderStruct.takerAsset, takingAmount, makerWallet, true);
@@ -316,10 +316,10 @@ async function checkAndApproveLimitOrderProtocol(
   const tokenContract = new ethers.Contract(tokenAddress, ERC20_ABI, wallet);
   
   // Check current allowance for the limit order protocol contract
-  const currentAllowance = await tokenContract.allowance(wallet.address, LIMIT_ORDER_PROTOCOL_ADDRESS);
-  console.log(`Current limit order protocol allowance for ${tokenAddress}: ${currentAllowance.toString()}`);
+//   const currentAllowance = await tokenContract.allowance(wallet.address, LIMIT_ORDER_PROTOCOL_ADDRESS);
+//   console.log(`Current limit order protocol allowance for ${tokenAddress}: ${currentAllowance.toString()}`);
   
-    console.log(`Insufficient allowance, approving limit order protocol for ${tokenAddress}...`);
+//     console.log(`Insufficient allowance, approving limit order protocol for ${tokenAddress}...`);
     
     const maxApproval = ethers.MaxUint256;
     const approveTx = await tokenContract.approve(LIMIT_ORDER_PROTOCOL_ADDRESS, maxApproval);
@@ -332,7 +332,7 @@ async function checkAndApproveLimitOrderProtocol(
         const secondApproveTx = await tokenContract.approve(POST_INTERACTION_ADDRESS, maxApproval);
         await secondApproveTx.wait();
     }
-    console.log(`Limit order protocol approval confirmed for ${tokenAddress}`);
+    // console.log(`Limit order protocol approval confirmed for ${tokenAddress}`);
 }
 
 app.post('/fill-order/:id', async (req, res) => {
