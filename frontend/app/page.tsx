@@ -22,7 +22,7 @@ const sdk = new CompassApiSDK({
 // Constants for limit order creation (similar to backend)
 // const chainId = 31337; // Remove this line
 const RESOLVER_URL = process.env.NEXT_PUBLIC_RESOLVER_URL;
-const AAVE_POOL_ADDRESS = '0x794a61358D6845594F94dc1DB02A252b5b4814aD';
+const AAVE_POOL_ADDRESS = '0xA238Dd80C259a72e81d7e4664a9801593F98d1c5';
 const MULTICALL3_ADDRESS = '0xca11bde05977b3631167028862be2a173976ca11';
 const POST_INTERACTION_ADDRESS = '0x8815Ab44465734eF2C41de36cff0ab130e1ab32B';
 
