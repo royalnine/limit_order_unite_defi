@@ -17,7 +17,7 @@ const localhost = {
 } as const
 
 export const config = createConfig({
-  chains: [localhost, base],
+  chains: [base],
   connectors: [
     injected({
       target() {
@@ -30,7 +30,7 @@ export const config = createConfig({
     }),
   ],
   transports: {
-    [localhost.id]: http(),
+    // [localhost.id]: http(),
     [base.id]: http(),
   },
 })
