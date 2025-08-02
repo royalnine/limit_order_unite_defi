@@ -400,7 +400,7 @@ export default function Page() {
             console.log('Fillable orders:', data);
             
             // Fetch spot prices for all orders
-            await pollOrderSpotPrices(data);
+            // await pollOrderSpotPrices(data);
         } catch (error) {
             console.error('Error polling fillable orders:', error);
         }
