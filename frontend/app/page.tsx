@@ -713,7 +713,7 @@ export default function Page() {
                                                 <div>Making: {order.order.makingAmount}</div>
                                                 <div>Taking: {order.order.takingAmount}</div>
                                                 <div>Limit Price: {order.limitPriceUsd}</div>
-                                                <div>Expiration: {new MakerTraits(order.order.makerTraits).expiration()}</div>
+                                                {/* <div>Expiration: {new MakerTraits(order.order.makerTraits).expiration()}</div> */}
                                             </div>
                                             <div className="mt-3 flex justify-end">
                                                 <button
