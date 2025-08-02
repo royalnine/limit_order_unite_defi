@@ -26,7 +26,7 @@ const AAVE_POOL_ADDRESS = '0xA238Dd80C259a72e81d7e4664a9801593F98d1c5';
 const MULTICALL3_ADDRESS = '0xca11bde05977b3631167028862be2a173976ca11';
 const POST_INTERACTION_ADDRESS = '0x8815Ab44465734eF2C41de36cff0ab130e1ab32B';
 const LIMIT_ORDER_PROTOCOL_ADDRESS = '0x111111125421cA6dc452d289314280a0f8842A65';
-
+const ONEINCH_API_KEY = process.env.NEXT_PUBLIC_ONEINCH_API_KEY;
 // ERC20 ABI for allowance and approval calls
 const ERC20_ABI = [
   'function allowance(address owner, address spender) view returns (uint256)',
@@ -86,6 +86,20 @@ function encodeAaveSupply(amount: bigint, trader: Address, supplyTokenAddress: s
 
     return supplyCalldata;
 }
+
+async function getSpotPrices(makerTokenAddress: string, takerTokenAddress: string): Promise<{ makerTokenPrice: number, takerTokenPrice: number }> {
+    const priceEndpointBaseURL = `https://api.1inch.dev/price/v1.1/8453/${makerTokenAddress},${takerTokenAddress}`
+  
+    const response = await fetch(`${priceEndpointBaseURL}?currency=USD`, {
+      headers: {
+        'Authorization': `Bearer ${ONEINCH_API_KEY}`
+      }
+    });
+    const data = await response.json();
+    const makerTokenPrice = data[makerTokenAddress];
+    const takerTokenPrice = data[takerTokenAddress];
+    return { makerTokenPrice, takerTokenPrice };
+  }
 
 function encodeErc20Allowance(amount: bigint, trader: Address, tokenAddress: string): string {
     const erc20Abi = [
@@ -233,6 +247,7 @@ export default function Page() {
     const [fillableOrders, setFillableOrders] = useState<any[]>([]);
     const [isPollingFillableOrders, setIsPollingFillableOrders] = useState(false);
     const [lastFillableOrdersPoll, setLastFillableOrdersPoll] = useState<Date | null>(null);
+    const [orderSpotPrices, setOrderSpotPrices] = useState<{[orderId: string]: {makerTokenPrice: number, takerTokenPrice: number}}>({});
     const fillableOrdersPollingRef = useRef<NodeJS.Timeout | null>(null);
     
     // Fill order state
@@ -341,6 +356,37 @@ export default function Page() {
         }
     };
 
+    // Poll spot prices for orders
+    const pollOrderSpotPrices = async (orders: any[]) => {
+        if (orders.length === 0) return;
+        
+        try {
+            const pricePromises = orders.map(async (order) => {
+                try {
+                    const prices = await getSpotPrices(order.order.makerAsset, order.order.takerAsset);
+                    return { orderId: order.id, prices };
+                } catch (error) {
+                    console.warn(`Failed to fetch prices for order ${order.id}:`, error);
+                    return null;
+                }
+            });
+            
+            const priceResults = await Promise.all(pricePromises);
+            const newPrices: {[orderId: string]: {makerTokenPrice: number, takerTokenPrice: number}} = {};
+            
+            priceResults.forEach(result => {
+                if (result) {
+                    newPrices[result.orderId] = result.prices;
+                }
+            });
+            
+            setOrderSpotPrices(newPrices);
+            console.log('Updated spot prices:', newPrices);
+        } catch (error) {
+            console.error('Error polling spot prices:', error);
+        }
+    };
+
     // Poll fillable orders
     const pollFillableOrders = async () => {
         try {
@@ -352,6 +398,9 @@ export default function Page() {
             setFillableOrders(data);
             setLastFillableOrdersPoll(new Date());
             console.log('Fillable orders:', data);
+            
+            // Fetch spot prices for all orders
+            await pollOrderSpotPrices(data);
         } catch (error) {
             console.error('Error polling fillable orders:', error);
         }
@@ -664,7 +713,15 @@ export default function Page() {
                                                 <div>Making: {order.order.makingAmount}</div>
                                                 <div>Taking: {order.order.takingAmount}</div>
                                                 <div>Limit Price: {order.limitPriceUsd}</div>
-                                                <div>Expiration: {new Date(order.expiration).toLocaleTimeString()}</div>
+                                                <div>Expiration: {new MakerTraits(order.order.makerTraits).expiration()}</div>
+                                                {orderSpotPrices[order.id] && (
+                                                    <div className="pt-1 border-t border-gray-600">
+                                                        <div>Maker Token Price: ${orderSpotPrices[order.id].makerTokenPrice?.toFixed(4) || 'N/A'}</div>
+                                                        <div>Taker Token Price: ${orderSpotPrices[order.id].takerTokenPrice?.toFixed(4) || 'N/A'}</div>
+                                                        <div>Current Ratio: {orderSpotPrices[order.id].takerTokenPrice && orderSpotPrices[order.id].makerTokenPrice ? 
+                                                            (orderSpotPrices[order.id].takerTokenPrice / orderSpotPrices[order.id].makerTokenPrice).toFixed(4) : 'N/A'}</div>
+                                                    </div>
+                                                )}
                                             </div>
                                             <div className="mt-3 flex justify-end">
                                                 <button
