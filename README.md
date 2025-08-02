@@ -21,11 +21,16 @@ The platform consists of four main components:
 
 1. **Frontend**: 
 
-This is a next js application that queries Compass API for the AAVE V3 positions allowing users to select a pair of collateral and borrow position to set limit orders for the tokens used in these positions. Encodes all function calls required to perform the anti-liquidation action.
+This is a next js application that queries Compass API for the AAVE V3 positions allowing users to select a pair of collateral and borrow position to set limit orders for the tokens used in these positions. Encodes all function calls required to perform the anti-liquidation action. Also sends the following requests to the `resolver`:
+- Submit an order.
+- Poll fillable orders endpoint to fetch orders that have crossed their thresholds.
+- Fills an order on behalf of the taker.
 
 2. **Backend**:
 
-Script used during development to test `Resolver API` running against locally spun up fork of a chain using `anvil`. **NOTE** this is not used in the final product, just left for whoever is curious.
+Script used during development to test `Resolver API` running against locally spun up fork of a chain using `anvil`. This helped me develop and debug the post interaction.
+
+**NOTE** this is not used in the final product, just left here for whoever is curious.
 
 3. **Smart Contracts**:
 

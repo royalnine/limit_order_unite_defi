@@ -220,6 +220,28 @@ app.get('/orders/:id', (req, res) => {
   res.json(order);
 });
 
+async function sendTx(signedRawTx: string) {
+  const baseUrl = "https://api.1inch.dev/tx-gateway/v1.1/8453"
+  const headers = {
+    'Authorization': `Bearer ${ONEINCH_API_KEY}`,
+    'Content-Type': 'application/json'
+  }
+  const endpoint = "/flashbots"
+  const data = {
+        "rawTransaction": signedRawTx
+    }
+
+  const response = await fetch(`${baseUrl}${endpoint}`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(data)
+  });
+  const result = await response.json();
+  console.log('Flashbots response:', result);
+
+  return result.transactionHash;
+}
+
 async function fillOrderOnProtocol(storedOrder: StoredOrder): Promise<any> {
   try {
     if (!storedOrder.reconstructedOrder) {
@@ -263,27 +285,40 @@ async function fillOrderOnProtocol(storedOrder: StoredOrder): Promise<any> {
       })
     const {trait, args} = takerTraits.encode()
     // console.log('vs:', vs, 'length:', vs.length);
-
-    // Add comprehensive logging for cast call construction
     
-    console.log('\n=== COMPLETE CAST COMMAND ===');
-    console.log(`cast call --rpc-url ${process.env.BASE_RPC_URL} \\`);
-    console.log(`  ${LIMIT_ORDER_PROTOCOL_ADDRESS} \\`);
-    console.log(`  "fillOrderArgs((uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256),bytes32,bytes32,uint256,uint256,bytes)" \\`);
-    console.log(`  "(${orderStruct.salt},${orderStruct.maker},${orderStruct.receiver},${orderStruct.makerAsset},${orderStruct.takerAsset},${orderStruct.makingAmount},${orderStruct.takingAmount},${orderStruct.makerTraits})" \\`);
-    console.log(`  ${r} \\`);
-    console.log(`  ${vs} \\`);
-    console.log(`  ${takingAmount.toString()} \\`);
-    console.log(`  ${trait} \\`);
-    console.log(`  ${args} \\`);
-    console.log(`  --trace \\`)
-    console.log(`  --from ${takerWallet.address}`)
-    console.log('================================\n');
-    console.log('filling order', orderStruct);
+    // console.log('\n=== COMPLETE CAST COMMAND ===');
+    // console.log(`cast call --rpc-url ${process.env.BASE_RPC_URL} \\`);
+    // console.log(`  ${LIMIT_ORDER_PROTOCOL_ADDRESS} \\`);
+    // console.log(`  "fillOrderArgs((uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256),bytes32,bytes32,uint256,uint256,bytes)" \\`);
+    // console.log(`  "(${orderStruct.salt},${orderStruct.maker},${orderStruct.receiver},${orderStruct.makerAsset},${orderStruct.takerAsset},${orderStruct.makingAmount},${orderStruct.takingAmount},${orderStruct.makerTraits})" \\`);
+    // console.log(`  ${r} \\`);
+    // console.log(`  ${vs} \\`);
+    // console.log(`  ${takingAmount.toString()} \\`);
+    // console.log(`  ${trait} \\`);
+    // console.log(`  ${args} \\`);
+    // console.log(`  --trace \\`)
+    // console.log(`  --from ${takerWallet.address}`)
+    // console.log('================================\n');
+    // console.log('filling order', orderStruct);
     // await checkAndApproveLimitOrderProtocol(orderStruct.makerAsset, BigInt(orderStruct.makingAmount), makerWallet);
     await checkAndApproveLimitOrderProtocol(orderStruct.takerAsset, takingAmount, takerWallet);
     // await checkAndApproveLimitOrderProtocol(orderStruct.takerAsset, takingAmount, makerWallet, true);
-    const tx = await contract.fillOrderArgs(
+    // const rawTx = await contract.fillOrderArgs.populateTransaction(
+    //   orderStruct,
+    //   r,
+    //   vs,
+    //   takingAmount,
+    //   trait,
+    //   args
+    // );
+    // console.log('Raw transaction object:', rawTx);
+    
+    // // Sign the transaction to get the raw transaction bytes
+    // const signedRawTx = await takerWallet.signTransaction(rawTx);
+    // console.log('Signed raw transaction:', signedRawTx);
+    
+    // const txHash = await sendTx(signedRawTx);
+    const transaction = await contract.fillOrderArgs(
       orderStruct,
       r,
       vs,
@@ -291,14 +326,11 @@ async function fillOrderOnProtocol(storedOrder: StoredOrder): Promise<any> {
       trait,
       args
     );
-
-    const receipt = await tx.wait();
-    console.log('receipt', receipt);
+    const receipt = await transaction.wait();
     orderStorage.delete(storedOrder.id);
+    // Note: Transaction is not executed, just prepared
     return {
       transactionHash: receipt.hash,
-      blockNumber: receipt.blockNumber,
-      gasUsed: receipt.gasUsed.toString()
     };
   } catch (error) {
     console.error('Error filling order:', error);

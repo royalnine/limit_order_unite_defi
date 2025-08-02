@@ -284,9 +284,8 @@ export default function Page() {
                 setSupportedTokens(tokensResponse);
                 console.log('Supported tokens:', tokensResponse);
                 
-                const tokenPositions: AaveTokenPosition[] = [];
-                
-                for (const token of tokensResponse.tokens) {
+                // Fetch all token positions in parallel
+                const positionPromises = tokensResponse.tokens.map(async (token) => {
                     try {
                         const positionResponse = await sdk.aaveV3.userPositionPerToken({
                             chain: 'base:mainnet',
@@ -300,17 +299,22 @@ export default function Page() {
                                           parseFloat(positionResponse.variableDebt) > 0;
                             
                             if (hasBalance || hasDebt) {
-                                tokenPositions.push({
+                                return {
                                     ...positionResponse,
                                     symbol: token.symbol,
                                     address: token.address,
-                                });
+                                };
                             }
                         }
+                        return null;
                     } catch (error) {
                         console.warn(`Failed to fetch position for token ${token.symbol}:`, error);
+                        return null;
                     }
-                }
+                });
+                
+                const positionResults = await Promise.all(positionPromises);
+                const tokenPositions = positionResults.filter((position): position is AaveTokenPosition => position !== null);
                 
                 setTokenPositions(tokenPositions);
                 console.log('Token positions:', tokenPositions);
@@ -659,6 +663,8 @@ export default function Page() {
                                                 <div>Maker: {order.order.maker.slice(0, 6)}...{order.order.maker.slice(-4)}</div>
                                                 <div>Making: {order.order.makingAmount}</div>
                                                 <div>Taking: {order.order.takingAmount}</div>
+                                                <div>Limit Price: {order.limitPriceUsd}</div>
+                                                <div>Expiration: {new Date(order.expiration).toLocaleTimeString()}</div>
                                             </div>
                                             <div className="mt-3 flex justify-end">
                                                 <button
