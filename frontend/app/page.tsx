@@ -714,14 +714,6 @@ export default function Page() {
                                                 <div>Taking: {order.order.takingAmount}</div>
                                                 <div>Limit Price: {order.limitPriceUsd}</div>
                                                 <div>Expiration: {new MakerTraits(order.order.makerTraits).expiration()}</div>
-                                                {orderSpotPrices[order.id] && (
-                                                    <div className="pt-1 border-t border-gray-600">
-                                                        <div>Maker Token Price: ${orderSpotPrices[order.id].makerTokenPrice?.toFixed(4) || 'N/A'}</div>
-                                                        <div>Taker Token Price: ${orderSpotPrices[order.id].takerTokenPrice?.toFixed(4) || 'N/A'}</div>
-                                                        <div>Current Ratio: {orderSpotPrices[order.id].takerTokenPrice && orderSpotPrices[order.id].makerTokenPrice ? 
-                                                            (orderSpotPrices[order.id].takerTokenPrice / orderSpotPrices[order.id].makerTokenPrice).toFixed(4) : 'N/A'}</div>
-                                                    </div>
-                                                )}
                                             </div>
                                             <div className="mt-3 flex justify-end">
                                                 <button
