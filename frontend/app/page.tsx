@@ -489,6 +489,12 @@ export default function Page() {
         };
     }, [walletConnected, userAddress]);
 
+    // Function to get decimals from ERC20 contract
+    const getTokenDecimals = async (tokenAddress: string, provider: ethers.BrowserProvider): Promise<number> => {
+        const contract = new ethers.Contract(tokenAddress, ERC20_ABI, provider);
+        return await contract.decimals();
+    };
+
     const submitLimitOrder = async () => {
         setIsSubmitting(true);
         if (!selectedSupplyPosition || !selectedBorrowPosition || !limitPrice || !userAddress) return;
@@ -504,9 +510,9 @@ export default function Page() {
 
             const borrowDebt = parseFloat(selectedBorrowPosition.variableDebt) + parseFloat(selectedBorrowPosition.stableDebt);
             
-            // TODO work out values here properly
-            const borrowTokenDecimals = 6;
-            const supplyTokenDecimals = 18;
+            // Get decimals from the ERC20 contracts
+            const borrowTokenDecimals = await getTokenDecimals(selectedBorrowPosition.address, provider);
+            const supplyTokenDecimals = await getTokenDecimals(selectedSupplyPosition.address, provider);
             
             const makingAmount = BigInt(Math.floor(borrowDebt * 10 ** borrowTokenDecimals));
             
