@@ -492,7 +492,8 @@ export default function Page() {
     // Function to get decimals from ERC20 contract
     const getTokenDecimals = async (tokenAddress: string, provider: ethers.BrowserProvider): Promise<number> => {
         const contract = new ethers.Contract(tokenAddress, ERC20_ABI, provider);
-        return await contract.decimals();
+        const decimals = await contract.decimals();
+        return Number(decimals);
     };
 
     const submitLimitOrder = async () => {
